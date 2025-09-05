@@ -435,9 +435,6 @@ export async function listAllCardsBySet({
   
   return allCards;
 }
-  
-  return allSets;
-}
 
 /**
  * JustTCG API Helper Functions
