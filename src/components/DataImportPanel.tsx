@@ -18,10 +18,12 @@ import {
   ChevronDown, 
   ChevronRight,
   Package,
-  Loader2
+  Loader2,
+  FileText
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { CardDataModal } from './CardDataModal';
 
 interface Game {
   id: string;
@@ -63,6 +65,10 @@ export const DataImportPanel = () => {
   const [setsSearchTerm, setSetsSearchTerm] = useState('');
   const [setsLoading, setSetsLoading] = useState<Set<string>>(new Set());
   const [showUnsyncedOnly, setShowUnsyncedOnly] = useState(false);
+  
+  // Card data modal state
+  const [selectedCard, setSelectedCard] = useState<any>(null);
+  const [isCardModalOpen, setIsCardModalOpen] = useState(false);
 
   const { toast } = useToast();
 
@@ -137,7 +143,7 @@ export const DataImportPanel = () => {
   useEffect(() => {
     fetchGames();
     
-    // Subscribe to realtime updates for sets
+    // Subscribe to realtime updates for sets and games
     const setsChannel = supabase
       .channel('sets-changes')
       .on('postgres_changes', { 
@@ -146,24 +152,54 @@ export const DataImportPanel = () => {
         table: 'sets' 
       }, (payload) => {
         console.log('Sets realtime update:', payload);
-        // Refresh sets for the expanded game if affected
-        if (expandedGameId && payload.new) {
+        // Handle real-time updates for sets
+        if (payload.eventType === 'UPDATE' && payload.new) {
           const updatedSet = payload.new as GameSet;
-          if (setsByGame.has(expandedGameId)) {
-            const currentSets = setsByGame.get(expandedGameId) || [];
-            const setIndex = currentSets.findIndex(s => s.id === updatedSet.id);
-            if (setIndex >= 0) {
-              const updatedSets = [...currentSets];
-              updatedSets[setIndex] = updatedSet;
-              setSetsByGame(prev => new Map(prev).set(expandedGameId, updatedSets));
-            }
+          
+          // Update sets in the current view if the game is expanded
+          if (expandedGameId) {
+            setSetsByGame(prev => {
+              const currentSets = prev.get(expandedGameId) || [];
+              const setIndex = currentSets.findIndex(s => s.id === updatedSet.id);
+              if (setIndex >= 0) {
+                const updatedSets = [...currentSets];
+                updatedSets[setIndex] = updatedSet;
+                return new Map(prev).set(expandedGameId, updatedSets);
+              }
+              return prev;
+            });
           }
+        }
+      })
+      .subscribe();
+
+    const gamesChannel = supabase
+      .channel('games-changes')
+      .on('postgres_changes', { 
+        event: 'UPDATE', 
+        schema: 'public', 
+        table: 'games' 
+      }, (payload) => {
+        console.log('Games realtime update:', payload);
+        // Refresh games when they're updated
+        if (payload.new) {
+          setGames(prev => {
+            const updatedGame = payload.new as Game;
+            const gameIndex = prev.findIndex(g => g.id === updatedGame.id);
+            if (gameIndex >= 0) {
+              const updatedGames = [...prev];
+              updatedGames[gameIndex] = updatedGame;
+              return updatedGames;
+            }
+            return prev;
+          });
         }
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(setsChannel);
+      supabase.removeChannel(gamesChannel);
     };
   }, [expandedGameId]);
 
@@ -387,6 +423,37 @@ export const DataImportPanel = () => {
     const gameSelectedSets = selectedSets.get(gameId);
     return filteredSets.length > 0 && gameSelectedSets && 
            filteredSets.every(set => gameSelectedSets.has(set.jt_set_id));
+  };
+
+  const viewSampleCard = async (setId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('cards')
+        .select('*')
+        .eq('set_id', setId)
+        .limit(1)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setSelectedCard(data);
+        setIsCardModalOpen(true);
+      } else {
+        toast({
+          title: "No Cards",
+          description: "No cards found for this set",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching sample card:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch sample card data",
+        variant: "destructive",
+      });
+    }
   };
 
   const importMethods = [
@@ -641,19 +708,32 @@ export const DataImportPanel = () => {
                                           </div>
                                         )}
                                       </div>
-                                      <Button
-                                        onClick={() => handleSyncCards(set.jt_set_id)}
-                                        disabled={isImporting || set.sync_status === 'syncing'}
-                                        variant="outline"
-                                        size="sm"
-                                      >
-                                        {set.sync_status === 'syncing' ? (
-                                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                        ) : (
-                                          <Download className="h-3 w-3 mr-1" />
-                                        )}
-                                        {set.sync_status === 'syncing' ? 'Syncing...' : 'Sync Cards'}
-                                      </Button>
+                                       <div className="flex gap-2">
+                                         <Button
+                                           onClick={() => handleSyncCards(set.jt_set_id)}
+                                           disabled={isImporting || set.sync_status === 'syncing'}
+                                           variant="outline"
+                                           size="sm"
+                                         >
+                                           {set.sync_status === 'syncing' ? (
+                                             <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                           ) : (
+                                             <Download className="h-3 w-3 mr-1" />
+                                           )}
+                                           {set.sync_status === 'syncing' ? 'Syncing...' : 'Sync Cards'}
+                                         </Button>
+                                         {set.cards_synced_count > 0 && (
+                                           <Button
+                                             onClick={() => viewSampleCard(set.id)}
+                                             size="sm"
+                                             variant="ghost"
+                                             className="text-accent hover:text-accent-foreground"
+                                           >
+                                             <FileText className="h-4 w-4 mr-1" />
+                                             View Sample JSON
+                                           </Button>
+                                         )}
+                                       </div>
                                     </div>
                                   );
                                 })
@@ -708,6 +788,12 @@ export const DataImportPanel = () => {
           </div>
         </Card>
       )}
+      
+      <CardDataModal 
+        isOpen={isCardModalOpen}
+        onClose={() => setIsCardModalOpen(false)}
+        card={selectedCard}
+      />
     </div>
   );
 };
