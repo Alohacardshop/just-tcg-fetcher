@@ -30,76 +30,10 @@ function createTimer() {
   };
 }
 
-// Helper functions for JustTCG API (copied from justtcg-sync for isolation)
-function getApiKey(): string {
-  const apiKey = Deno.env.get('JUSTTCG_API_KEY');
-  if (!apiKey) {
-    throw new Error('JUSTTCG_API_KEY not configured in environment');
-  }
-  return apiKey;
-}
-
-function createJustTCGHeaders(apiKey: string): HeadersInit {
-  if (!apiKey) {
-    throw new Error('API key is required');
-  }
-  
-  return {
-    'X-API-Key': apiKey,
-    'Content-Type': 'application/json'
-  };
-}
-
-function normalizeGameSlug(game: string): string {
-  if (!game || typeof game !== 'string') {
-    throw new Error('Game slug is required and must be a string');
-  }
-  
-  const normalized = game.toLowerCase().trim();
-  
-  switch (normalized) {
-    case 'pokemon-tcg':
-    case 'pokemon-english':
-    case 'pokemon-us':
-      return 'pokemon';
-    case 'pokemon-jp':
-    case 'pokemon-japanese':
-      return 'pokemon-japan';
-    case 'magic':
-    case 'magic-the-gathering':
-    case 'mtg-english':
-      return 'mtg';
-    case 'one-piece':
-    case 'one-piece-tcg':
-      return 'one-piece-card-game';
-    case 'lorcana':
-    case 'disney-lorcana-tcg':
-      return 'disney-lorcana';
-    case 'star-wars':
-    case 'swu':
-      return 'star-wars-unlimited';
-    default:
-      return normalized;
-  }
-}
-
-function buildJustTCGUrl(endpoint: string, params: Record<string, string | number> = {}): string {
-  const url = new URL(`https://api.justtcg.com/v1/${endpoint}`);
-  
-  if (params.game) {
-    params.game = normalizeGameSlug(params.game.toString());
-  }
-  
-  Object.entries(params).forEach(([key, value]) => {
-    url.searchParams.set(key, value.toString());
-  });
-  
-  return url.toString();
-}
+import { buildUrl, authHeaders } from '../shared/justtcg-client.ts';
 
 async function fetchJsonWithRetry(
   url: string, 
-  init: RequestInit = {}, 
   options: { tries?: number; baseDelayMs?: number; timeoutMs?: number } = {}
 ): Promise<any> {
   const { tries = 3, baseDelayMs = 500, timeoutMs = 30000 } = options;
@@ -120,7 +54,7 @@ async function fetchJsonWithRetry(
       console.log(`🔄 Attempt ${attempt}/${tries} for ${url}`);
       
       const response = await fetch(url, {
-        ...init,
+        headers: authHeaders(),
         signal: controller.signal
       });
       
@@ -252,9 +186,9 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    let apiKey: string;
     try {
-      apiKey = getApiKey();
+      // Verify API key is available
+      authHeaders();
     } catch (error) {
       logStructured('error', 'JustTCG API key not configured', {
         operation,
@@ -371,7 +305,7 @@ serve(async (req) => {
     console.log(`🔄 Fetching fresh pricing from JustTCG for: ${gameId}/${setName}/${cardName}`);
     
     try {
-      const pricingUrl = buildJustTCGUrl('cards', { 
+      const pricingUrl = buildUrl('cards', { 
         game: gameId,
         set: setName,
         name: cardName
@@ -379,7 +313,6 @@ serve(async (req) => {
       
       const pricingData = await fetchJsonWithRetry(
         pricingUrl,
-        { headers: createJustTCGHeaders(apiKey) },
         { tries: 3, baseDelayMs: 500, timeoutMs: 30000 }
       );
 

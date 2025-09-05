@@ -8,6 +8,10 @@ import {
   logPaginationProgress,
   createTimer 
 } from './telemetry.ts';
+import { buildUrl, authHeaders, normalizeGameSlug } from '../shared/justtcg-client.ts';
+
+// Re-export for backwards compatibility
+export { normalizeGameSlug };
 
 /**
  * JustTCG API Helper Functions
@@ -15,89 +19,11 @@ import {
  */
 
 /**
- * Gets the JustTCG API key from environment variables
- * This should ONLY be called from server-side code (Edge Functions)
- */
-export function getApiKey(): string {
-  const apiKey = Deno.env.get('JUSTTCG_API_KEY');
-  if (!apiKey) {
-    throw new Error('JUSTTCG_API_KEY not configured in environment');
-  }
-  return apiKey;
-}
-
-/**
- * Normalizes game slugs for JustTCG API consistency
- * Handles known variations and edge cases
- */
-export function normalizeGameSlug(game: string): string {
-  if (!game || typeof game !== 'string') {
-    throw new Error('Game slug is required and must be a string');
-  }
-  
-  const normalized = game.toLowerCase().trim();
-  
-  // Apply normalization rules for known game variations
-  switch (normalized) {
-    // Pokemon variations
-    case 'pokemon-tcg':
-    case 'pokemon-english':
-    case 'pokemon-us':
-      return 'pokemon';
-    
-    // Pokemon Japan specifically 
-    case 'pokemon-jp':
-    case 'pokemon-japanese':
-      return 'pokemon-japan';
-    
-    // Magic: The Gathering variations
-    case 'magic':
-    case 'magic-the-gathering':
-    case 'mtg-english':
-      return 'mtg';
-    
-    // One Piece variations
-    case 'one-piece':
-    case 'one-piece-tcg':
-      return 'one-piece-card-game';
-    
-    // Disney Lorcana variations
-    case 'lorcana':
-    case 'disney-lorcana-tcg':
-      return 'disney-lorcana';
-    
-    // Star Wars variations
-    case 'star-wars':
-    case 'swu':
-      return 'star-wars-unlimited';
-    
-    // Already normalized or unrecognized
-    default:
-      return normalized;
-  }
-}
-
-/**
- * Creates standardized headers for JustTCG API calls
- * Ensures consistent header format across all API calls
- */
-export function createJustTCGHeaders(apiKey: string): HeadersInit {
-  if (!apiKey) {
-    throw new Error('API key is required');
-  }
-  
-  return {
-    'X-API-Key': apiKey, // Exact case match as required by JustTCG API
-    'Content-Type': 'application/json'
-  };
-}
-
-/**
  * Makes a GET request to the JustTCG API with proper headers
  * @deprecated Use fetchJsonWithRetry instead for better error handling
  */
-export async function fetchFromJustTCG(url: string, apiKey: string): Promise<Response> {
-  const headers = createJustTCGHeaders(apiKey);
+export async function fetchFromJustTCG(url: string): Promise<Response> {
+  const headers = authHeaders();
   
   console.log(`Making JustTCG API call to: ${url}`);
   
@@ -113,41 +39,17 @@ export async function fetchFromJustTCG(url: string, apiKey: string): Promise<Res
 }
 
 /**
- * Builds normalized URL for JustTCG API endpoints
- * Automatically applies game slug normalization
- */
-export function buildJustTCGUrl(
-  endpoint: string, 
-  params: Record<string, string | number> = {}
-): string {
-  const url = new URL(`https://api.justtcg.com/v1/${endpoint}`);
-  
-  // Normalize game parameter if present
-  if (params.game) {
-    params.game = normalizeGameSlug(params.game.toString());
-  }
-  
-  // Add all parameters to URL
-  Object.entries(params).forEach(([key, value]) => {
-    url.searchParams.set(key, value.toString());
-  });
-  
-  return url.toString();
-}
-
-/**
  * Probes for English-only sets when Pokemon Japan returns empty results
  * Checks if the same set exists under the regular 'pokemon' game
  */
 export async function probeEnglishOnlySet(
-  setName: string, 
-  apiKey: string
+  setName: string
 ): Promise<{ hasEnglishCards: boolean; cardCount: number }> {
   console.log(`🔍 Probing for English-only cards in set: ${setName}`);
   
   try {
     // Probe page 1 of the same set under regular 'pokemon'
-    const probeUrl = buildJustTCGUrl('cards', { 
+    const probeUrl = buildUrl('cards', { 
       game: 'pokemon', // Use regular pokemon, not pokemon-japan
       set: setName,
       limit: 1,
@@ -156,7 +58,6 @@ export async function probeEnglishOnlySet(
     
     const response = await fetchJsonWithRetry(
       probeUrl,
-      { headers: createJustTCGHeaders(apiKey) },
       { tries: 3, baseDelayMs: 300, timeoutMs: 30000 } // Faster probe
     );
     
@@ -167,7 +68,7 @@ export async function probeEnglishOnlySet(
       console.log(`✅ Found English cards for set: ${setName} under 'pokemon' game`);
       
       // Get rough count by checking if there are more than 1 card
-      const countUrl = buildJustTCGUrl('cards', { 
+      const countUrl = buildUrl('cards', { 
         game: 'pokemon',
         set: setName,
         limit: 200,
@@ -176,7 +77,6 @@ export async function probeEnglishOnlySet(
       
       const countResponse = await fetchJsonWithRetry(
         countUrl,
-        { headers: createJustTCGHeaders(apiKey) },
         { tries: 2, baseDelayMs: 300, timeoutMs: 30000 }
       );
       
@@ -207,7 +107,6 @@ interface RetryOptions {
  */
 export async function fetchJsonWithRetry(
   url: string, 
-  init: RequestInit = {}, 
   options: RetryOptions = {}
 ): Promise<any> {
   const { tries = 6, baseDelayMs = 500, timeoutMs = 90000 } = options;
@@ -240,7 +139,7 @@ export async function fetchJsonWithRetry(
       console.log(`🔄 Attempt ${attempt}/${tries} for ${url}`);
       
       const response = await fetch(url, {
-        ...init,
+        headers: authHeaders(),
         signal: controller.signal
       });
       
@@ -424,7 +323,6 @@ export function extractDataFromEnvelope(response: any): { data: any[], hasMore?:
  */
 export async function fetchPaginatedData<T = any>(
   baseUrl: string,
-  headers: HeadersInit,
   options: PaginationOptions = {}
 ): Promise<PaginatedResponse<T>> {
   const { 
@@ -475,7 +373,6 @@ export async function fetchPaginatedData<T = any>(
     try {
       const response = await fetchJsonWithRetry(
         url.toString(),
-        { headers },
         { timeoutMs, ...retryOptions }
       );
       
@@ -499,72 +396,87 @@ export async function fetchPaginatedData<T = any>(
       pagesFetched++;
       offset += pageData.length; // Use actual returned count for offset
       
-      logStructured('info', `Page ${pagesFetched} fetched`, {
+      logStructured('info', `Page ${pagesFetched} completed`, {
         operation,
         game,
         set,
         page: pagesFetched,
-        pageItems: pageData.length,
+        itemsThisPage: pageData.length,
         totalItems: allData.length,
-        duration: pageDuration
+        duration: pageDuration,
+        hasMore
       });
       
-      console.log(`📊 Page ${pagesFetched}: ${pageData.length} items (total: ${allData.length})`);
+      console.log(`✅ Page ${pagesFetched} fetched: ${pageData.length} items (total: ${allData.length})`);
       
-      // Check hasMore flag if available
+      // Check if API explicitly says no more data
       if (hasMore === false) {
-        logStructured('info', 'API signaled no more data (hasMore=false)', {
+        logStructured('info', 'API reported hasMore=false, stopping pagination', {
           operation,
           game,
           set,
           page: pagesFetched,
           totalItems: allData.length
         });
-        console.log(`🏁 API signaled no more data (hasMore=false), stopping`);
+        console.log(`🏁 API reported hasMore=false, stopping pagination`);
         stoppedReason = 'hasMore_false';
         break;
       }
       
-      // If we got less than requested limit, likely at the end
+      // Auto-stop if we get a partial page (indicates end of data)
       if (pageData.length < limit) {
-        logStructured('info', `Received ${pageData.length} < ${limit} requested, likely at end`, {
+        logStructured('info', 'Partial page received, assuming end of data', {
           operation,
           game,
           set,
           page: pagesFetched,
-          pageItems: pageData.length,
-          limit
+          itemsThisPage: pageData.length,
+          expectedLimit: limit,
+          totalItems: allData.length
         });
-        console.log(`🏁 Received ${pageData.length} < ${limit} requested, likely at end`);
+        console.log(`🏁 Partial page (${pageData.length}/${limit}), assuming end of data`);
         stoppedReason = 'completed';
         break;
       }
       
     } catch (error) {
       const pageDuration = pageTimer.end();
-      logOperationError(operation, `Pagination failed on page ${pagesFetched + 1}`, {
+      logOperationError(operation, `Error fetching page ${pagesFetched + 1}`, {
         game,
         set,
         page: pagesFetched + 1,
         duration: pageDuration,
+        totalItemsFetched: allData.length,
         error: error.message
       });
-      console.error(`❌ Pagination failed on page ${pagesFetched + 1}:`, error.message);
-      throw error;
+      
+      // If we have some data, return what we got; otherwise re-throw
+      if (allData.length > 0) {
+        logStructured('warn', 'Partial data recovered from pagination error', {
+          operation,
+          game,
+          set,
+          totalItemsFetched: allData.length,
+          lastSuccessfulPage: pagesFetched
+        });
+        console.warn(`⚠️ Error on page ${pagesFetched + 1}, returning ${allData.length} items from successful pages`);
+        break;
+      } else {
+        throw error;
+      }
     }
   }
   
-  if (pagesFetched >= maxPages) {
-    logStructured('warn', `Hit maximum page limit (${maxPages}), stopping pagination`, {
+  if (pagesFetched >= maxPages && allData.length > 0) {
+    stoppedReason = 'max_pages';
+    logStructured('warn', 'Pagination stopped due to max pages limit', {
       operation,
       game,
       set,
-      pagesFetched,
-      totalItems: allData.length,
-      maxPages
+      maxPages,
+      totalItems: allData.length
     });
-    console.warn(`⚠️ Hit maximum page limit (${maxPages}), stopping pagination`);
-    stoppedReason = 'max_pages';
+    console.warn(`⚠️ Reached max pages limit (${maxPages}), may have more data available`);
   }
   
   const totalDuration = timer.end();
@@ -577,7 +489,7 @@ export async function fetchPaginatedData<T = any>(
     duration: totalDuration
   });
   
-  console.log(`✅ Pagination complete: ${allData.length} total items, ${pagesFetched} pages, stopped: ${stoppedReason}`);
+  console.log(`📊 Pagination complete: ${allData.length} items, ${pagesFetched} pages, stopped: ${stoppedReason}`);
   
   return {
     data: allData,
@@ -585,17 +497,4 @@ export async function fetchPaginatedData<T = any>(
     pagesFetched,
     stoppedReason
   };
-}
-
-/**
- * Validates that headers contain the required API key header
- * Used for testing and validation
- */
-export function validateJustTCGHeaders(headers: HeadersInit): boolean {
-  if (!headers || typeof headers !== 'object') {
-    return false;
-  }
-  
-  // Check for exact case match
-  return 'X-API-Key' in headers && !!headers['X-API-Key'];
 }
