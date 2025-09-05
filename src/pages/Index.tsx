@@ -1,85 +1,102 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Header } from "@/components/Header";
-import { GameCard } from "@/components/GameCard";
-import { SetCard } from "@/components/SetCard";
-import { SearchFilters } from "@/components/SearchFilters";
-import { DataImportPanel } from "@/components/DataImportPanel";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft, Database, Search, Download, LogIn } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
+import React, { useState, useEffect } from 'react';
+import { Header } from '@/components/Header';
+import { SearchFilters } from '@/components/SearchFilters';
+import { DataImportPanel } from '@/components/DataImportPanel';
+import { GameCard } from '@/components/GameCard';
+import { SetCard } from '@/components/SetCard';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { ArrowLeft, TrendingUp, Package, Users, DollarSign, Database, Search, Download } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { Navigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 
 const Index = () => {
-  const { user, loading } = useAuth();
-  const navigate = useNavigate();
   const [currentView, setCurrentView] = useState<'dashboard' | 'games' | 'sets' | 'cards'>('dashboard');
-  const [selectedGame, setSelectedGame] = useState<string>('');
-  const [selectedSet, setSelectedSet] = useState<string>('');
+  const [selectedGame, setSelectedGame] = useState<any>(null);
+  const [selectedSet, setSelectedSet] = useState<any>(null);
+  const [games, setGames] = useState<any[]>([]);
+  const [sets, setSets] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const { user, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    if (!loading && !user) {
-      navigate("/auth");
+    if (user) {
+      loadGames();
     }
-  }, [user, loading, navigate]);
+  }, [user]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-subtle flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
+  const loadGames = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('games')
+        .select('*')
+        .order('name');
+      
+      if (error) throw error;
+      setGames(data || []);
+    } catch (error) {
+      console.error('Error loading games:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSets = async (gameId: string) => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('sets')
+        .select('*, games(name)')
+        .eq('game_id', gameId)
+        .order('name');
+      
+      if (error) throw error;
+      setSets(data || []);
+    } catch (error) {
+      console.error('Error loading sets:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (authLoading || loading) {
+    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
 
   if (!user) {
-    return null;
+    return <Navigate to="/auth" replace />;
   }
 
-  // Mock data - will be replaced with real API calls via Supabase
-  const mockGames = [
-    { id: '1', name: 'Magic: The Gathering', game_id: 'mtg', cards_count: 45000, sets_count: 120 },
-    { id: '2', name: 'Pokémon', game_id: 'pokemon', cards_count: 32000, sets_count: 85 },
-    { id: '3', name: 'Yu-Gi-Oh!', game_id: 'yugioh', cards_count: 28000, sets_count: 90 },
-    { id: '4', name: 'Disney Lorcana', game_id: 'lorcana', cards_count: 2500, sets_count: 8 },
-    { id: '5', name: 'One Piece TCG', game_id: 'onepiece', cards_count: 1200, sets_count: 12 },
-    { id: '6', name: 'Digimon', game_id: 'digimon', cards_count: 3200, sets_count: 15 }
-  ];
-
-  const mockSets = [
-    { id: '1', name: 'Wilds of Eldraine', game_id: 'mtg', game: 'Magic: The Gathering', cards_count: 280 },
-    { id: '2', name: 'The Lost Caverns of Ixalan', game_id: 'mtg', game: 'Magic: The Gathering', cards_count: 290 },
-    { id: '3', name: 'Base Set', game_id: 'pokemon', game: 'Pokémon', cards_count: 102 },
-    { id: '4', name: 'Paldea Evolved', game_id: 'pokemon', game: 'Pokémon', cards_count: 193 },
-  ];
-
   const handleViewSets = (gameId: string) => {
-    setSelectedGame(gameId);
+    const game = games.find(g => g.jt_game_id === gameId);
+    setSelectedGame(game);
+    loadSets(game.id);
     setCurrentView('sets');
   };
 
   const handleViewCards = (setId: string) => {
-    setSelectedSet(setId);
+    const set = sets.find(s => s.jt_set_id === setId);
+    setSelectedSet(set);
     setCurrentView('cards');
   };
 
   const handleSearch = (filters: any) => {
     console.log('Search filters:', filters);
-    // Will implement actual search via Supabase
   };
 
   const handleBackToDashboard = () => {
     setCurrentView('dashboard');
-    setSelectedGame('');
-    setSelectedSet('');
+    setSelectedGame(null);
+    setSelectedSet(null);
   };
 
   const handleBackToGames = () => {
     setCurrentView('games');
-    setSelectedSet('');
+    setSelectedSet(null);
   };
 
   const renderBreadcrumb = () => {
@@ -95,15 +112,15 @@ const Index = () => {
           <ArrowLeft className="h-4 w-4 mr-2" />
           Dashboard
         </Button>
-        {currentView === 'sets' && (
+        {currentView === 'sets' && selectedGame && (
           <>
             <span className="text-muted-foreground">/</span>
             <span className="text-foreground font-medium">
-              {mockGames.find(g => g.game_id === selectedGame)?.name} Sets
+              {selectedGame.name} Sets
             </span>
           </>
         )}
-        {currentView === 'cards' && (
+        {currentView === 'cards' && selectedGame && selectedSet && (
           <>
             <span className="text-muted-foreground">/</span>
             <Button 
@@ -111,11 +128,11 @@ const Index = () => {
               onClick={handleBackToGames}
               className="text-muted-foreground hover:text-foreground p-0 h-auto"
             >
-              {mockGames.find(g => g.game_id === selectedGame)?.name}
+              {selectedGame.name}
             </Button>
             <span className="text-muted-foreground">/</span>
             <span className="text-foreground font-medium">
-              {mockSets.find(s => s.id === selectedSet)?.name} Cards
+              {selectedSet.name} Cards
             </span>
           </>
         )}
@@ -156,21 +173,21 @@ const Index = () => {
                 <Card className="bg-gradient-card border-border shadow-card">
                   <div className="p-6 text-center">
                     <div className="text-3xl font-bold text-primary mb-2">
-                      {mockGames.reduce((acc, game) => acc + game.cards_count, 0).toLocaleString()}
+                      {games.reduce((acc, game) => acc + (game.cards_count || 0), 0).toLocaleString()}
                     </div>
                     <div className="text-muted-foreground">Total Cards Available</div>
                   </div>
                 </Card>
                 <Card className="bg-gradient-card border-border shadow-card">
                   <div className="p-6 text-center">
-                    <div className="text-3xl font-bold text-accent mb-2">{mockGames.length}</div>
+                    <div className="text-3xl font-bold text-accent mb-2">{games.length}</div>
                     <div className="text-muted-foreground">Supported Games</div>
                   </div>
                 </Card>
                 <Card className="bg-gradient-card border-border shadow-card">
                   <div className="p-6 text-center">
                     <div className="text-3xl font-bold text-rare mb-2">
-                      {mockGames.reduce((acc, game) => acc + game.sets_count, 0)}
+                      {games.reduce((acc, game) => acc + (game.sets_count || 0), 0)}
                     </div>
                     <div className="text-muted-foreground">Total Sets</div>
                   </div>
@@ -200,7 +217,7 @@ const Index = () => {
             </TabsContent>
 
             <TabsContent value="search" className="space-y-6">
-              <SearchFilters onSearch={handleSearch} games={mockGames} />
+              <SearchFilters onSearch={handleSearch} games={games} />
               <Card className="bg-gradient-card border-border shadow-card">
                 <div className="p-8 text-center text-muted-foreground">
                   <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -220,14 +237,14 @@ const Index = () => {
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">Available Games</h2>
               <div className="text-sm text-muted-foreground">
-                {mockGames.length} games available
+                {games.length} games available
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {mockGames.map((game) => (
-                <GameCard 
-                  key={game.id} 
-                  game={game} 
+              {games.map((game) => (
+                <GameCard
+                  key={game.id}
+                  game={game}
                   onViewSets={handleViewSets}
                 />
               ))}
@@ -235,38 +252,36 @@ const Index = () => {
           </div>
         )}
 
-        {currentView === 'sets' && (
+        {currentView === 'sets' && selectedGame && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold">
-                {mockGames.find(g => g.game_id === selectedGame)?.name} Sets
+                {selectedGame.name} Sets
               </h2>
               <div className="text-sm text-muted-foreground">
-                {mockSets.filter(s => s.game_id === selectedGame).length} sets available
+                {sets.length} sets available
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {mockSets
-                .filter(set => set.game_id === selectedGame)
-                .map((set) => (
-                  <SetCard 
-                    key={set.id} 
-                    set={set} 
-                    onViewCards={handleViewCards}
-                  />
-                ))}
+              {sets.map((set) => (
+                <SetCard 
+                  key={set.id} 
+                  set={set} 
+                  onViewCards={handleViewCards}
+                />
+              ))}
             </div>
           </div>
         )}
 
         {currentView === 'cards' && (
           <div className="space-y-6">
-            <SearchFilters onSearch={handleSearch} games={mockGames} />
+            <SearchFilters onSearch={handleSearch} games={games} />
             <Card className="bg-gradient-card border-border shadow-card">
               <div className="p-8 text-center text-muted-foreground">
                 <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>Card data will be displayed here once Supabase is connected</p>
-                <p className="text-sm mt-2">Connect to Supabase to enable real-time card data fetching</p>
+                <p>Card data will be displayed here once synced from JustTCG</p>
+                <p className="text-sm mt-2">Use the Import Data tab to sync cards for this set</p>
               </div>
             </Card>
           </div>

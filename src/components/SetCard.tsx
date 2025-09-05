@@ -7,15 +7,15 @@ interface SetCardProps {
   set: {
     id: string;
     name: string;
-    game_id: string;
-    game: string;
-    cards_count: number;
+    jt_set_id: string;
+    games?: { name: string };
+    total_cards?: number;
   };
   onViewCards: (setId: string) => void;
 }
 
 export const SetCard = ({ set, onViewCards }: SetCardProps) => {
-  const getGameColor = (gameId: string) => {
+  const getGameColor = (setId: string) => {
     const colors = {
       'mtg': 'text-rare',
       'pokemon': 'text-accent',
@@ -24,7 +24,7 @@ export const SetCard = ({ set, onViewCards }: SetCardProps) => {
       'onepiece': 'text-legendary',
       'digimon': 'text-primary',
     };
-    return colors[gameId as keyof typeof colors] || 'text-common';
+    return colors['mtg' as keyof typeof colors] || 'text-common';
   };
 
   return (
@@ -36,8 +36,8 @@ export const SetCard = ({ set, onViewCards }: SetCardProps) => {
               {set.name}
             </h3>
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className={`${getGameColor(set.game_id)} border-current`}>
-                {set.game}
+              <Badge variant="outline" className={`${getGameColor(set.jt_set_id)} border-current`}>
+                {set.games?.name || 'Unknown Game'}
               </Badge>
             </div>
           </div>
@@ -46,14 +46,14 @@ export const SetCard = ({ set, onViewCards }: SetCardProps) => {
         
         <div className="flex items-center justify-between">
           <div className="text-center p-3 bg-secondary/50 rounded-lg flex-1">
-            <div className="text-xl font-bold text-accent">{set.cards_count.toLocaleString()}</div>
+            <div className="text-xl font-bold text-accent">{(set.total_cards || 0).toLocaleString()}</div>
             <div className="text-xs text-muted-foreground">Cards Available</div>
           </div>
         </div>
         
         <div className="flex gap-2 pt-2">
           <Button 
-            onClick={() => onViewCards(set.id)}
+            onClick={() => onViewCards(set.jt_set_id)}
             className="flex-1 bg-accent/10 text-accent hover:bg-accent hover:text-accent-foreground border border-accent/20"
           >
             View Cards
