@@ -2,6 +2,34 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import Stripe from "https://esm.sh/stripe@14.21.0";
 
+// Telemetry functions (copied for isolation)
+interface LogContext {
+  operation: string;
+  cardId?: string;
+  condition?: string;
+  printing?: string;
+  duration?: number;
+  cached?: boolean;
+  error?: string;
+  statusCode?: number;
+  [key: string]: any;
+}
+
+function logStructured(level: 'info' | 'warn' | 'error', message: string, context: LogContext) {
+  const timestamp = new Date().toISOString();
+  const logEntry = { timestamp, level: level.toUpperCase(), message, context };
+  const emoji = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : '📊';
+  console.log(`${emoji} [${level.toUpperCase()}] ${message}`, logEntry.context);
+}
+
+function createTimer() {
+  let startTime = 0;
+  return {
+    start: () => { startTime = Date.now(); },
+    end: () => Date.now() - startTime
+  };
+}
+
 // Helper functions for JustTCG API (copied from justtcg-sync for isolation)
 function getApiKey(): string {
   const apiKey = Deno.env.get('JUSTTCG_API_KEY');
@@ -215,6 +243,10 @@ serve(async (req) => {
   }
 
   try {
+    const operation = 'proxy-pricing';
+    const timer = createTimer();
+    timer.start();
+    
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -224,6 +256,10 @@ serve(async (req) => {
     try {
       apiKey = getApiKey();
     } catch (error) {
+      logStructured('error', 'JustTCG API key not configured', {
+        operation,
+        error: error.message
+      });
       console.error('JustTCG API key not found:', error.message);
       return new Response(
         JSON.stringify({ success: false, error: 'API key not configured' }),
@@ -231,13 +267,21 @@ serve(async (req) => {
       );
     }
 
-    const { cardId, condition = 'Near Mint', printing = 'Normal', refresh = false }: PricingRequest = await req.json();
-    
     // Log the complete request payload for debugging
     const requestPayload = { cardId, condition, printing, refresh };
+    logStructured('info', 'Pricing request started', {
+      operation,
+      ...requestPayload
+    });
     console.log(`🏷️ Pricing request payload:`, requestPayload);
     
     if (!cardId) {
+      const duration = timer.end();
+      logStructured('error', 'Missing cardId in request payload', {
+        operation,
+        duration,
+        error: 'JustTCG card ID is required'
+      });
       console.error('❌ Missing cardId in request payload');
       return new Response(
         JSON.stringify({ success: false, error: 'JustTCG card ID is required', status: 400 }),
@@ -257,6 +301,13 @@ serve(async (req) => {
       .maybeSingle();
 
     if (cardError || !cardData) {
+      const duration = timer.end();
+      logStructured('error', 'Card not found in database', {
+        operation,
+        cardId,
+        duration,
+        error: `Card not found: ${cardId}`
+      });
       console.error('❌ Card not found for cardId:', cardId);
       return new Response(
         JSON.stringify({ 
@@ -274,6 +325,9 @@ serve(async (req) => {
 
     // Check if we have recent cached pricing (unless refresh is requested)
     if (!refresh) {
+      const cacheTimer = createTimer();
+      cacheTimer.start();
+      
       const cacheTimeLimit = new Date(Date.now() - 30 * 60 * 1000); // 30 minutes
       
       const { data: cachedPrice, error: cacheError } = await supabaseClient
@@ -288,7 +342,19 @@ serve(async (req) => {
         .limit(1)
         .maybeSingle();
 
+      const cacheDuration = cacheTimer.end();
+      
       if (!cacheError && cachedPrice) {
+        const totalDuration = timer.end();
+        logStructured('info', 'Using cached pricing', {
+          operation,
+          cardId,
+          condition,
+          printing,
+          cached: true,
+          cacheDuration,
+          totalDuration
+        });
         console.log(`📋 Using cached pricing for card: ${cardId}`);
         return new Response(
           JSON.stringify({ 
@@ -390,6 +456,17 @@ serve(async (req) => {
 
       console.log(`✅ Fresh pricing fetched and saved for card: ${cardId}`);
       
+      const totalDuration = timer.end();
+      logStructured('info', 'Fresh pricing fetched successfully', {
+        operation,
+        cardId,
+        condition,
+        printing,
+        cached: false,
+        duration: totalDuration,
+        marketPrice: conditionPricing.market_price || conditionPricing.price
+      });
+      
       return new Response(
         JSON.stringify({ 
           success: true, 
@@ -400,6 +477,15 @@ serve(async (req) => {
       );
 
     } catch (error) {
+      const duration = timer.end();
+      logStructured('error', 'Error fetching pricing from JustTCG', {
+        operation,
+        cardId,
+        condition,
+        printing,
+        duration,
+        error: error.message
+      });
       console.error('❌ Error fetching pricing from JustTCG:', error.message, 'Payload:', requestPayload);
       return new Response(
         JSON.stringify({ 
@@ -412,6 +498,10 @@ serve(async (req) => {
     }
 
   } catch (error) {
+    logStructured('error', 'Top-level error in proxy-pricing function', {
+      operation: 'proxy-pricing',
+      error: error.message
+    });
     console.error('❌ Error in proxy-pricing function:', error.message);
     return new Response(
       JSON.stringify({ 

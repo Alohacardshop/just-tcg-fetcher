@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry, fetchPaginatedData, extractDataFromEnvelope, normalizeGameSlug, buildJustTCGUrl, probeEnglishOnlySet } from './api-helpers.ts';
+import { logOperationStart, logOperationSuccess, logOperationError, logEarlyReturn, createTimer } from './telemetry.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -126,6 +127,11 @@ serve(async (req) => {
 });
 
 async function syncGames(supabaseClient: any, apiKey: string) {
+  const operation = 'sync-games';
+  const timer = createTimer();
+  timer.start();
+  
+  logOperationStart(operation);
   console.log('Syncing games from JustTCG...');
   
   const data = await fetchJsonWithRetry(
@@ -143,6 +149,8 @@ async function syncGames(supabaseClient: any, apiKey: string) {
   const { data: games } = extractDataFromEnvelope(data);
   
   if (games.length === 0) {
+    const duration = timer.end();
+    logEarlyReturn(operation, 'No games array found in response', { duration });
     console.error('Could not find games array in response structure');
     return { synced: 0, error: 'No games array found in response' };
   }
@@ -168,15 +176,31 @@ async function syncGames(supabaseClient: any, apiKey: string) {
     .select();
 
   if (error) {
+    const duration = timer.end();
+    logOperationError(operation, `Database error: ${error.message}`, { 
+      duration,
+      gamesCount: gameRecords.length 
+    });
     console.error('Error upserting games:', error);
     throw new Error(`Database error: ${error.message}`);
   }
 
+  const duration = timer.end();
+  logOperationSuccess(operation, {
+    duration,
+    synced: upsertedGames?.length || 0,
+    totalGames: games.length
+  });
   console.log(`Successfully synced ${upsertedGames?.length || 0} games`);
   return { synced: upsertedGames?.length || 0, games: upsertedGames };
 }
 
 async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
+  const operation = 'sync-sets';
+  const timer = createTimer();
+  timer.start();
+  
+  logOperationStart(operation, { game: gameId });
   console.log(`Syncing sets for game: ${gameId}`);
   
   // Normalize the game ID for API consistency
@@ -191,6 +215,11 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
     .single();
 
   if (gameError || !gameData) {
+    const duration = timer.end();
+    logEarlyReturn(operation, `Game not found: ${gameId}`, { 
+      game: gameId,
+      duration 
+    });
     throw new Error(`Game not found: ${gameId}`);
   }
 

@@ -1,3 +1,14 @@
+import { 
+  logStructured, 
+  logOperationStart, 
+  logOperationSuccess, 
+  logOperationError, 
+  logRetryAttempt, 
+  logTimeout,
+  logPaginationProgress,
+  createTimer 
+} from './telemetry.ts';
+
 /**
  * JustTCG API Helper Functions
  * Normalizes API header usage and ensures server-only key access
@@ -200,11 +211,17 @@ export async function fetchJsonWithRetry(
   options: RetryOptions = {}
 ): Promise<any> {
   const { tries = 6, baseDelayMs = 500, timeoutMs = 90000 } = options;
+  const operation = 'fetchJsonWithRetry';
+  const timer = createTimer();
+  
+  timer.start();
+  logOperationStart(operation, { url, tries, timeoutMs });
   
   let lastError: Error | null = null;
   
   for (let attempt = 1; attempt <= tries; attempt++) {
-    const startTime = Date.now();
+    const attemptTimer = createTimer();
+    attemptTimer.start();
     let timedOut = false;
     
     try {
@@ -213,7 +230,12 @@ export async function fetchJsonWithRetry(
       const timeoutId = setTimeout(() => {
         timedOut = true;
         controller.abort();
+        logTimeout(operation, timeoutMs, { url, attempt, retryCount: attempt });
       }, timeoutMs);
+      
+      if (attempt > 1) {
+        logRetryAttempt(operation, attempt, tries, { url });
+      }
       
       console.log(`🔄 Attempt ${attempt}/${tries} for ${url}`);
       
@@ -223,19 +245,38 @@ export async function fetchJsonWithRetry(
       });
       
       clearTimeout(timeoutId);
-      const duration = Date.now() - startTime;
+      const attemptDuration = attemptTimer.end();
       
       if (response.ok) {
-        console.log(`✅ Success on attempt ${attempt} (${duration}ms): ${url}`);
+        const totalDuration = timer.end();
+        logOperationSuccess(operation, { 
+          url, 
+          attempt, 
+          duration: totalDuration,
+          attemptDuration,
+          retryCount: attempt - 1 
+        });
+        console.log(`✅ Success on attempt ${attempt} (${attemptDuration}ms): ${url}`);
         return await response.json();
       }
       
       // Handle retryable errors
       if (response.status === 429 || response.status >= 500) {
         const errorText = await response.text();
+        const attemptDuration = attemptTimer.end();
         lastError = new Error(`HTTP ${response.status}: ${errorText}`);
         
-        console.warn(`⚠️ Retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
+        logStructured('warn', `Retryable error on attempt ${attempt}`, {
+          operation,
+          url,
+          attempt,
+          retryCount: attempt,
+          duration: attemptDuration,
+          statusCode: response.status,
+          error: errorText
+        });
+        
+        console.warn(`⚠️ Retryable error on attempt ${attempt} (${attemptDuration}ms): ${response.status} - ${errorText}`);
         
         if (attempt < tries) {
           const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
@@ -246,19 +287,45 @@ export async function fetchJsonWithRetry(
       } else {
         // Non-retryable error
         const errorText = await response.text();
-        console.error(`❌ Non-retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
+        const attemptDuration = attemptTimer.end();
+        const totalDuration = timer.end();
+        
+        logOperationError(operation, `Non-retryable HTTP ${response.status}: ${errorText}`, {
+          url,
+          attempt,
+          duration: totalDuration,
+          attemptDuration,
+          statusCode: response.status,
+          retryCount: attempt - 1
+        });
+        
+        console.error(`❌ Non-retryable error on attempt ${attempt} (${attemptDuration}ms): ${response.status} - ${errorText}`);
         throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
       }
       
     } catch (error) {
-      const duration = Date.now() - startTime;
+      const attemptDuration = attemptTimer.end();
       
       if (error.name === 'AbortError' || timedOut) {
         lastError = new Error(`Request timed out after ${timeoutMs}ms`);
-        console.error(`⏰ Timeout on attempt ${attempt} (${duration}ms): ${url}`);
+        logTimeout(operation, timeoutMs, {
+          url,
+          attempt,
+          duration: attemptDuration,
+          retryCount: attempt
+        });
+        console.error(`⏰ Timeout on attempt ${attempt} (${attemptDuration}ms): ${url}`);
       } else {
         lastError = error as Error;
-        console.error(`❌ Network error on attempt ${attempt} (${duration}ms):`, error.message);
+        logStructured('warn', `Network error on attempt ${attempt}`, {
+          operation,
+          url,
+          attempt,
+          duration: attemptDuration,
+          retryCount: attempt,
+          error: error.message
+        });
+        console.error(`❌ Network error on attempt ${attempt} (${attemptDuration}ms):`, error.message);
       }
       
       if (attempt < tries) {
@@ -269,6 +336,13 @@ export async function fetchJsonWithRetry(
     }
   }
   
+  const totalDuration = timer.end();
+  logOperationError(operation, `All ${tries} attempts failed`, {
+    url,
+    duration: totalDuration,
+    retryCount: tries,
+    finalError: lastError?.message
+  });
   console.error(`💥 All ${tries} attempts failed for ${url}`);
   throw lastError || new Error('All retry attempts failed');
 }
@@ -360,17 +434,41 @@ export async function fetchPaginatedData<T = any>(
     retryOptions = {}
   } = options;
   
+  const operation = 'fetchPaginatedData';
+  const timer = createTimer();
+  timer.start();
+  
+  const urlObj = new URL(baseUrl);
+  const game = urlObj.searchParams.get('game');
+  const set = urlObj.searchParams.get('set');
+  
+  logOperationStart(operation, { 
+    url: baseUrl, 
+    game, 
+    set, 
+    limit, 
+    maxPages 
+  });
+  
   let allData: T[] = [];
   let offset = 0;
   let pagesFetched = 0;
   let stoppedReason: PaginatedResponse<T>['stoppedReason'] = 'completed';
   
-  console.log(`🔄 Starting paginated fetch: ${baseUrl} (limit=${limit}, maxPages=${maxPages})`);
-  
   while (pagesFetched < maxPages) {
+    const pageTimer = createTimer();
+    pageTimer.start();
+    
     const url = new URL(baseUrl);
     url.searchParams.set('limit', limit.toString());
     url.searchParams.set('offset', offset.toString());
+    
+    logPaginationProgress(operation, pagesFetched + 1, allData.length, {
+      game,
+      set,
+      offset,
+      limit
+    });
     
     console.log(`📄 Fetching page ${pagesFetched + 1}/${maxPages} (offset=${offset}, limit=${limit})`);
     
@@ -382,8 +480,16 @@ export async function fetchPaginatedData<T = any>(
       );
       
       const { data: pageData, hasMore } = extractDataFromEnvelope(response);
+      const pageDuration = pageTimer.end();
       
       if (pageData.length === 0) {
+        logStructured('info', 'Empty page received, stopping pagination', {
+          operation,
+          game,
+          set,
+          page: pagesFetched + 1,
+          duration: pageDuration
+        });
         console.log(`📭 Empty page received, stopping pagination`);
         stoppedReason = 'empty_page';
         break;
@@ -393,10 +499,27 @@ export async function fetchPaginatedData<T = any>(
       pagesFetched++;
       offset += pageData.length; // Use actual returned count for offset
       
+      logStructured('info', `Page ${pagesFetched} fetched`, {
+        operation,
+        game,
+        set,
+        page: pagesFetched,
+        pageItems: pageData.length,
+        totalItems: allData.length,
+        duration: pageDuration
+      });
+      
       console.log(`📊 Page ${pagesFetched}: ${pageData.length} items (total: ${allData.length})`);
       
       // Check hasMore flag if available
       if (hasMore === false) {
+        logStructured('info', 'API signaled no more data (hasMore=false)', {
+          operation,
+          game,
+          set,
+          page: pagesFetched,
+          totalItems: allData.length
+        });
         console.log(`🏁 API signaled no more data (hasMore=false), stopping`);
         stoppedReason = 'hasMore_false';
         break;
@@ -404,21 +527,55 @@ export async function fetchPaginatedData<T = any>(
       
       // If we got less than requested limit, likely at the end
       if (pageData.length < limit) {
+        logStructured('info', `Received ${pageData.length} < ${limit} requested, likely at end`, {
+          operation,
+          game,
+          set,
+          page: pagesFetched,
+          pageItems: pageData.length,
+          limit
+        });
         console.log(`🏁 Received ${pageData.length} < ${limit} requested, likely at end`);
         stoppedReason = 'completed';
         break;
       }
       
     } catch (error) {
+      const pageDuration = pageTimer.end();
+      logOperationError(operation, `Pagination failed on page ${pagesFetched + 1}`, {
+        game,
+        set,
+        page: pagesFetched + 1,
+        duration: pageDuration,
+        error: error.message
+      });
       console.error(`❌ Pagination failed on page ${pagesFetched + 1}:`, error.message);
       throw error;
     }
   }
   
   if (pagesFetched >= maxPages) {
+    logStructured('warn', `Hit maximum page limit (${maxPages}), stopping pagination`, {
+      operation,
+      game,
+      set,
+      pagesFetched,
+      totalItems: allData.length,
+      maxPages
+    });
     console.warn(`⚠️ Hit maximum page limit (${maxPages}), stopping pagination`);
     stoppedReason = 'max_pages';
   }
+  
+  const totalDuration = timer.end();
+  logOperationSuccess(operation, {
+    game,
+    set,
+    totalItems: allData.length,
+    pagesFetched,
+    stoppedReason,
+    duration: totalDuration
+  });
   
   console.log(`✅ Pagination complete: ${allData.length} total items, ${pagesFetched} pages, stopped: ${stoppedReason}`);
   
