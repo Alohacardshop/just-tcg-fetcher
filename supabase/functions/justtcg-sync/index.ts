@@ -8,6 +8,7 @@ import {
   probeEnglishOnlySet,
   fetchJsonWithRetry,
   listAllSets,
+  listAllCardsBySet,
   buildUrl,
   authHeaders
 } from './api-helpers.ts';
@@ -315,16 +316,17 @@ async function syncCards(supabaseClient: any, setId: string) {
   
     console.log(`Fetching cards for game: ${gameId} (normalized: ${normalizedGameId}), set: ${setName} (expected: ${expectedTotalCards} cards)`);
 
-    // Fetch all cards (singles) with robust pagination
-    const { data: allCards, totalFetched, pagesFetched, stoppedReason } = await fetchPaginatedData<Card>(
-      buildUrl('cards', { game: normalizedGameId, set: setName }),
-      { limit: 200, maxPages: 100, timeoutMs: 90000 }
-    );
+    // Use complete pagination to get all cards for the set
+    const allCards = await listAllCardsBySet({
+      gameId: normalizedGameId,
+      setId: setName,
+      pageSize: 200
+    });
 
-    console.log(`📊 Cards pagination complete: ${totalFetched} cards, ${pagesFetched} pages, stopped: ${stoppedReason}`);
+    console.log(`📊 Complete cards fetch: ${allCards.length} cards retrieved`);
 
     // Pokemon Japan empty results guard: Check for English-only sets
-    if (normalizedGameId === 'pokemon-japan' && totalFetched === 0 && stoppedReason === 'empty_page') {
+    if (normalizedGameId === 'pokemon-japan' && allCards.length === 0) {
       console.log(`🔍 Pokemon Japan returned zero cards for set: ${setName}, probing for English-only set...`);
       
       const { hasEnglishCards, cardCount } = await probeEnglishOnlySet(setName);

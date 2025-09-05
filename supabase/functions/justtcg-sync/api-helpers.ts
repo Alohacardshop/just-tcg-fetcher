@@ -303,7 +303,135 @@ export async function listAllSets(gameId: string, pageSize: number = 100): Promi
     console.warn(`⚠️ Count mismatch: fetched ${allSets.length}, expected ${expectedTotal}`);
   } else if (expectedTotal !== null) {
     console.log(`✅ Count matches expected total: ${allSets.length}`);
+}
+
+/**
+ * Complete pagination for cards by set - loops until meta.hasMore === false
+ * Returns all cards for a given game/set with optional ordering support
+ */
+export async function listAllCardsBySet({
+  gameId,
+  setId,
+  pageSize = 100,
+  orderBy,
+  order
+}: {
+  gameId: string;
+  setId: string;
+  pageSize?: number;
+  orderBy?: 'price' | '24h' | '7d' | '30d';
+  order?: 'asc' | 'desc';
+}): Promise<any[]> {
+  console.log(`🃏 Starting complete cards pagination for ${gameId}/${setId} (pageSize: ${pageSize}, orderBy: ${orderBy}, order: ${order})`);
+  
+  let allCards: any[] = [];
+  let offset = 0;
+  let hasMore = true;
+  let pageCount = 0;
+  let expectedTotal: number | null = null;
+  
+  while (hasMore) {
+    pageCount++;
+    const startTime = Date.now();
+    
+    try {
+      console.log(`📄 Fetching cards page ${pageCount} (offset: ${offset}, limit: ${pageSize})`);
+      
+      // Build query parameters
+      const params: Record<string, string | number> = {
+        game: gameId,
+        set: setId,
+        limit: pageSize,
+        offset: offset
+      };
+      
+      // Add ordering parameters if specified (only for game/set queries, not search)
+      if (orderBy) {
+        params.orderBy = orderBy;
+      }
+      if (order) {
+        params.order = order;
+      }
+      
+      const url = buildUrl('cards', params);
+      
+      const response = await fetchJsonWithRetry(url);
+      const duration = Date.now() - startTime;
+      
+      // Extract data and metadata
+      const pageData = response.data || response.cards || [];
+      const meta = response.meta || response._metadata || {};
+      
+      // Store expected total from first page
+      if (pageCount === 1 && meta.total !== undefined) {
+        expectedTotal = meta.total;
+        console.log(`📊 Expected total cards: ${expectedTotal}`);
+      }
+      
+      console.log(`✅ Page ${pageCount} fetched: ${pageData.length} cards (${duration}ms)`);
+      console.log(`📈 Meta info - hasMore: ${meta.hasMore}, total: ${meta.total}, limit: ${meta.limit}, offset: ${meta.offset}`);
+      
+      if (pageData.length === 0) {
+        console.log(`📭 Empty page received, stopping pagination`);
+        break;
+      }
+      
+      // Accumulate data
+      allCards.push(...pageData);
+      
+      // Check meta.hasMore first (most reliable)
+      if (meta.hasMore === false) {
+        console.log(`🏁 meta.hasMore === false, pagination complete`);
+        hasMore = false;
+        break;
+      }
+      
+      // Fallback: if we got fewer items than requested, assume we're done
+      if (pageData.length < pageSize) {
+        console.log(`🏁 Partial page (${pageData.length}/${pageSize}), assuming end of data`);
+        hasMore = false;
+        break;
+      }
+      
+      // Update offset for next page
+      offset += pageData.length;
+      
+      // Safety check: if we've reached expected total, stop
+      if (expectedTotal !== null && allCards.length >= expectedTotal) {
+        console.log(`🏁 Reached expected total (${allCards.length}/${expectedTotal}), stopping`);
+        hasMore = false;
+        break;
+      }
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.error(`❌ Error fetching cards page ${pageCount} (${duration}ms):`, error.message);
+      
+      // If we have some data, return what we got; otherwise re-throw
+      if (allCards.length > 0) {
+        console.warn(`⚠️ Partial data recovered: ${allCards.length} cards from ${pageCount - 1} successful pages`);
+        break;
+      } else {
+        throw error;
+      }
+    }
   }
+  
+  console.log(`📊 Cards pagination complete for ${gameId}/${setId}:`);
+  console.log(`   Total cards fetched: ${allCards.length}`);
+  console.log(`   Pages processed: ${pageCount}`);
+  console.log(`   Expected total: ${expectedTotal || 'unknown'}`);
+  console.log(`   Ordering: ${orderBy ? `${orderBy} ${order || 'asc'}` : 'default'}`);
+  
+  // Validate against expected total if available
+  if (expectedTotal !== null && allCards.length !== expectedTotal) {
+    console.warn(`⚠️ Count mismatch: fetched ${allCards.length}, expected ${expectedTotal}`);
+  } else if (expectedTotal !== null) {
+    console.log(`✅ Count matches expected total: ${allCards.length}`);
+  }
+  
+  return allCards;
+}
   
   return allSets;
 }
