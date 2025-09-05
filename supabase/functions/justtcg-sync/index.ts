@@ -178,7 +178,7 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
     throw new Error(`Game not found: ${gameId}`);
   }
 
-  const response = await fetch(`https://api.justtcg.com/v1/games/${gameId}/sets`, {
+  const response = await fetch(`https://api.justtcg.com/v1/sets?game=${encodeURIComponent(gameId)}`, {
     headers: { 'X-API-KEY': apiKey }
   });
 
@@ -189,18 +189,35 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
   }
 
   const data = await response.json();
-  const sets: Set[] = data.sets || [];
+  // Debug response structure
+  console.log('Sets response keys:', Object.keys(data));
+  console.log('Sets response sample:', JSON.stringify(data).substring(0, 400) + '...');
+
+  // Robust parsing for sets
+  let sets: any[] = [];
+  if (Array.isArray(data)) {
+    sets = data;
+  } else if (Array.isArray((data as any).sets)) {
+    sets = (data as any).sets;
+  } else if (Array.isArray((data as any).data)) {
+    sets = (data as any).data;
+  } else if ((data as any).data && Array.isArray((data as any).data.sets)) {
+    sets = (data as any).data.sets;
+  } else {
+    console.error('Could not find sets array in response structure');
+    return { synced: 0, sets: [] };
+  }
 
   console.log(`Found ${sets.length} sets to sync`);
 
   // Upsert sets
-  const setRecords = sets.map(set => ({
-    jt_set_id: set.set_id,
+  const setRecords = sets.map((set: any) => ({
+    jt_set_id: set.set_id || set.id?.toString(),
     game_id: gameData.id,
     code: set.code,
     name: set.name,
     release_date: set.release_date,
-    total_cards: set.total_cards
+    total_cards: set.total_cards ?? set.cards_count
   }));
 
   const { data: upsertedSets, error } = await supabaseClient
