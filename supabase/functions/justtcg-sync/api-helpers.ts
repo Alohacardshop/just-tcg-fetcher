@@ -114,6 +114,29 @@ export async function fetchJsonWithRetry(
         const errorText = await response.text();
         console.error(`❌ Non-retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
         throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
+      }
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      
+      if (error.name === 'AbortError' || timedOut) {
+        lastError = new Error(`Request timed out after ${timeoutMs}ms`);
+        console.error(`⏰ Timeout on attempt ${attempt} (${duration}ms): ${url}`);
+      } else {
+        lastError = error as Error;
+        console.error(`❌ Network error on attempt ${attempt} (${duration}ms):`, error.message);
+      }
+      
+      if (attempt < tries) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+        console.log(`⏰ Waiting ${delayMs}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  
+  console.error(`💥 All ${tries} attempts failed for ${url}`);
+  throw lastError || new Error('All retry attempts failed');
 }
 
 interface PaginationOptions {
