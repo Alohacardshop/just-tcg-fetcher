@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry, fetchPaginatedData, extractDataFromEnvelope } from './api-helpers.ts';
+import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry, fetchPaginatedData, extractDataFromEnvelope, normalizeGameSlug, buildJustTCGUrl } from './api-helpers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -129,7 +129,7 @@ async function syncGames(supabaseClient: any, apiKey: string) {
   console.log('Syncing games from JustTCG...');
   
   const data = await fetchJsonWithRetry(
-    'https://api.justtcg.com/v1/games',
+    buildJustTCGUrl('games'),
     { headers: createJustTCGHeaders(apiKey) },
     { tries: 6, baseDelayMs: 500, timeoutMs: 90000 }
   );
@@ -178,12 +178,16 @@ async function syncGames(supabaseClient: any, apiKey: string) {
 
 async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
   console.log(`Syncing sets for game: ${gameId}`);
+  
+  // Normalize the game ID for API consistency
+  const normalizedGameId = normalizeGameSlug(gameId);
+  console.log(`Normalized game ID: ${gameId} -> ${normalizedGameId}`);
 
-  // Get the internal game UUID from jt_game_id
+  // Get the internal game UUID from jt_game_id (use original, not normalized for DB lookup)
   const { data: gameData, error: gameError } = await supabaseClient
     .from('games')
     .select('id')
-    .eq('jt_game_id', gameId)
+    .eq('jt_game_id', gameId) // Use original gameId for DB lookup
     .single();
 
   if (gameError || !gameData) {
@@ -191,7 +195,7 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
   }
 
   const { data: sets, totalFetched, pagesFetched, stoppedReason } = await fetchPaginatedData(
-    `https://api.justtcg.com/v1/sets?game=${encodeURIComponent(gameId)}`,
+    buildJustTCGUrl('sets', { game: normalizedGameId }), // Use normalized for API
     createJustTCGHeaders(apiKey),
     { limit: 200, maxPages: 100, timeoutMs: 90000 }
   );
@@ -273,14 +277,15 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     }
 
     const gameId = setData.games.jt_game_id;
+    const normalizedGameId = normalizeGameSlug(gameId);
     const setName = setData.name;
     const expectedTotalCards = setData.total_cards;
   
-    console.log(`Fetching cards for game: ${gameId}, set: ${setName} (expected: ${expectedTotalCards} cards)`);
+    console.log(`Fetching cards for game: ${gameId} (normalized: ${normalizedGameId}), set: ${setName} (expected: ${expectedTotalCards} cards)`);
 
     // Fetch all cards (singles) with robust pagination
     const { data: allCards, totalFetched, pagesFetched, stoppedReason } = await fetchPaginatedData<Card>(
-      `https://api.justtcg.com/v1/cards?game=${encodeURIComponent(gameId)}&set=${encodeURIComponent(setName)}`,
+      buildJustTCGUrl('cards', { game: normalizedGameId, set: setName }),
       createJustTCGHeaders(apiKey),
       { limit: 200, maxPages: 100, timeoutMs: 90000 }
     );

@@ -86,7 +86,155 @@ const tests = [
         if (!error.message.includes('API key is required')) {
           throw new Error(`Unexpected error message: ${error.message}`);
         }
+  },
+  
+  {
+    name: 'normalizeGameSlug handles pokemon variations',
+    test: () => {
+      const { normalizeGameSlug } = require('./api-helpers.ts');
+      
+      // Pokemon variations should normalize to 'pokemon'
+      if (normalizeGameSlug('pokemon-tcg') !== 'pokemon') {
+        throw new Error('Expected pokemon-tcg to normalize to pokemon');
       }
+      
+      if (normalizeGameSlug('Pokemon-English') !== 'pokemon') {
+        throw new Error('Expected Pokemon-English to normalize to pokemon');
+      }
+      
+      if (normalizeGameSlug('POKEMON-US') !== 'pokemon') {
+        throw new Error('Expected POKEMON-US to normalize to pokemon');
+      }
+      
+      // Pokemon Japan should remain distinct
+      if (normalizeGameSlug('pokemon-japan') !== 'pokemon-japan') {
+        throw new Error('Expected pokemon-japan to remain pokemon-japan');
+      }
+      
+      if (normalizeGameSlug('pokemon-jp') !== 'pokemon-japan') {
+        throw new Error('Expected pokemon-jp to normalize to pokemon-japan');
+      }
+      
+      console.log('✅ Pokemon normalization test passed');
+    }
+  },
+  
+  {
+    name: 'normalizeGameSlug handles mtg variations',
+    test: () => {
+      const { normalizeGameSlug } = require('./api-helpers.ts');
+      
+      if (normalizeGameSlug('magic') !== 'mtg') {
+        throw new Error('Expected magic to normalize to mtg');
+      }
+      
+      if (normalizeGameSlug('Magic-The-Gathering') !== 'mtg') {
+        throw new Error('Expected Magic-The-Gathering to normalize to mtg');
+      }
+      
+      if (normalizeGameSlug('MTG-English') !== 'mtg') {
+        throw new Error('Expected MTG-English to normalize to mtg');
+      }
+      
+      console.log('✅ MTG normalization test passed');
+    }
+  },
+  
+  {
+    name: 'normalizeGameSlug handles other game variations',
+    test: () => {
+      const { normalizeGameSlug } = require('./api-helpers.ts');
+      
+      // One Piece variations
+      if (normalizeGameSlug('one-piece') !== 'one-piece-card-game') {
+        throw new Error('Expected one-piece to normalize to one-piece-card-game');
+      }
+      
+      // Disney Lorcana variations
+      if (normalizeGameSlug('lorcana') !== 'disney-lorcana') {
+        throw new Error('Expected lorcana to normalize to disney-lorcana');
+      }
+      
+      // Star Wars variations
+      if (normalizeGameSlug('star-wars') !== 'star-wars-unlimited') {
+        throw new Error('Expected star-wars to normalize to star-wars-unlimited');
+      }
+      
+      if (normalizeGameSlug('swu') !== 'star-wars-unlimited') {
+        throw new Error('Expected swu to normalize to star-wars-unlimited');
+      }
+      
+      console.log('✅ Other games normalization test passed');
+    }
+  },
+  
+  {
+    name: 'normalizeGameSlug preserves already normalized slugs',
+    test: () => {
+      const { normalizeGameSlug } = require('./api-helpers.ts');
+      
+      // Already normalized should remain unchanged
+      if (normalizeGameSlug('pokemon') !== 'pokemon') {
+        throw new Error('Expected pokemon to remain pokemon');
+      }
+      
+      if (normalizeGameSlug('mtg') !== 'mtg') {
+        throw new Error('Expected mtg to remain mtg');
+      }
+      
+      if (normalizeGameSlug('disney-lorcana') !== 'disney-lorcana') {
+        throw new Error('Expected disney-lorcana to remain disney-lorcana');
+      }
+      
+      console.log('✅ Preserved normalization test passed');
+    }
+  },
+  
+  {
+    name: 'normalizeGameSlug throws on invalid input',
+    test: () => {
+      const { normalizeGameSlug } = require('./api-helpers.ts');
+      
+      try {
+        normalizeGameSlug('');
+        throw new Error('Expected error for empty string');
+      } catch (error) {
+        if (!error.message.includes('Game slug is required')) {
+          throw new Error('Expected specific error message for empty string');
+        }
+      }
+      
+      try {
+        normalizeGameSlug(null);
+        throw new Error('Expected error for null');
+      } catch (error) {
+        if (!error.message.includes('Game slug is required')) {
+          throw new Error('Expected specific error message for null');
+        }
+      }
+      
+      console.log('✅ Input validation test passed');
+    }
+  },
+  
+  {
+    name: 'buildJustTCGUrl applies normalization automatically',
+    test: () => {
+      const { buildJustTCGUrl } = require('./api-helpers.ts');
+      
+      const url1 = buildJustTCGUrl('sets', { game: 'pokemon-tcg' });
+      if (!url1.includes('game=pokemon')) {
+        throw new Error('Expected URL to contain normalized game=pokemon');
+      }
+      
+      const url2 = buildJustTCGUrl('cards', { game: 'magic', set: 'alpha' });
+      if (!url2.includes('game=mtg')) {
+        throw new Error('Expected URL to contain normalized game=mtg');
+      }
+      
+      console.log('✅ URL builder normalization test passed');
+    }
+  }
       console.log('✅ Header validation test passed');
     }
   },

@@ -16,6 +16,57 @@ export function getApiKey(): string {
 }
 
 /**
+ * Normalizes game slugs for JustTCG API consistency
+ * Handles known variations and edge cases
+ */
+export function normalizeGameSlug(game: string): string {
+  if (!game || typeof game !== 'string') {
+    throw new Error('Game slug is required and must be a string');
+  }
+  
+  const normalized = game.toLowerCase().trim();
+  
+  // Apply normalization rules for known game variations
+  switch (normalized) {
+    // Pokemon variations
+    case 'pokemon-tcg':
+    case 'pokemon-english':
+    case 'pokemon-us':
+      return 'pokemon';
+    
+    // Pokemon Japan specifically 
+    case 'pokemon-jp':
+    case 'pokemon-japanese':
+      return 'pokemon-japan';
+    
+    // Magic: The Gathering variations
+    case 'magic':
+    case 'magic-the-gathering':
+    case 'mtg-english':
+      return 'mtg';
+    
+    // One Piece variations
+    case 'one-piece':
+    case 'one-piece-tcg':
+      return 'one-piece-card-game';
+    
+    // Disney Lorcana variations
+    case 'lorcana':
+    case 'disney-lorcana-tcg':
+      return 'disney-lorcana';
+    
+    // Star Wars variations
+    case 'star-wars':
+    case 'swu':
+      return 'star-wars-unlimited';
+    
+    // Already normalized or unrecognized
+    default:
+      return normalized;
+  }
+}
+
+/**
  * Creates standardized headers for JustTCG API calls
  * Ensures consistent header format across all API calls
  */
@@ -48,6 +99,29 @@ export async function fetchFromJustTCG(url: string, apiKey: string): Promise<Res
   }
   
   return response;
+}
+
+/**
+ * Builds normalized URL for JustTCG API endpoints
+ * Automatically applies game slug normalization
+ */
+export function buildJustTCGUrl(
+  endpoint: string, 
+  params: Record<string, string | number> = {}
+): string {
+  const url = new URL(`https://api.justtcg.com/v1/${endpoint}`);
+  
+  // Normalize game parameter if present
+  if (params.game) {
+    params.game = normalizeGameSlug(params.game.toString());
+  }
+  
+  // Add all parameters to URL
+  Object.entries(params).forEach(([key, value]) => {
+    url.searchParams.set(key, value.toString());
+  });
+  
+  return url.toString();
 }
 
 interface RetryOptions {

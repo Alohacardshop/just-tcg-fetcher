@@ -56,6 +56,35 @@ const { data, totalFetched, pagesFetched, stoppedReason } = await fetchPaginated
 - `empty_page`: Received empty response
 - `completed`: Received fewer items than requested limit
 
+## Game Slug Normalization
+
+All game identifiers are automatically normalized before API calls to ensure consistency:
+
+### Supported Normalizations
+
+- **Pokemon variations**: `pokemon-tcg`, `pokemon-english`, `pokemon-us` → `pokemon`
+- **Pokemon Japan**: `pokemon-jp`, `pokemon-japanese` → `pokemon-japan`  
+- **Magic variations**: `magic`, `magic-the-gathering`, `mtg-english` → `mtg`
+- **One Piece variations**: `one-piece`, `one-piece-tcg` → `one-piece-card-game`
+- **Disney Lorcana variations**: `lorcana`, `disney-lorcana-tcg` → `disney-lorcana`
+- **Star Wars variations**: `star-wars`, `swu` → `star-wars-unlimited`
+
+### Usage
+
+The normalization is applied automatically in all API calls:
+
+```typescript
+// All of these will normalize to 'pokemon' for the API call
+buildJustTCGUrl('sets', { game: 'pokemon-tcg' });
+buildJustTCGUrl('sets', { game: 'Pokemon-English' });
+buildJustTCGUrl('sets', { game: 'POKEMON-US' });
+
+// This will normalize to 'pokemon-japan' 
+buildJustTCGUrl('sets', { game: 'pokemon-jp' });
+```
+
+The `normalizeGameSlug()` function handles case-insensitive matching and ensures consistent API communication.
+
 ## Functions
 
 - `sync-games`: Syncs all available games
