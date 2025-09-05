@@ -8,23 +8,23 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 240 25% 8%;
-    --foreground: 210 40% 98%;
+    --background: 210 40% 98%;
+    --foreground: 240 25% 8%;
 
-    --card: 240 20% 12%;
-    --card-foreground: 210 40% 98%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 25% 8%;
 
-    --popover: 240 20% 12%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 25% 8%;
 
     --primary: 258 89% 66%;
-    --primary-foreground: 240 25% 8%;
+    --primary-foreground: 210 40% 98%;
 
-    --secondary: 240 15% 18%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 240 25% 8%;
 
-    --muted: 240 15% 18%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
 
     --accent: 45 93% 58%;
     --accent-foreground: 240 25% 8%;
@@ -32,25 +32,25 @@ All colors MUST be HSL.
     --destructive: 0 84% 60%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 240 15% 18%;
-    --input: 240 15% 18%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
     --ring: 258 89% 66%;
 
     /* Custom TCG theme colors */
     --legendary: 45 93% 58%;
     --rare: 258 89% 66%;
     --uncommon: 200 89% 66%;
-    --common: 215 20% 65%;
+    --common: 215 16% 47%;
     
     /* Gradients */
     --gradient-primary: linear-gradient(135deg, hsl(258 89% 66%), hsl(280 89% 66%));
     --gradient-legendary: linear-gradient(135deg, hsl(45 93% 58%), hsl(35 93% 68%));
-    --gradient-card: linear-gradient(135deg, hsl(240 20% 12%), hsl(240 25% 15%));
-    --gradient-subtle: linear-gradient(180deg, hsl(240 25% 8%), hsl(240 20% 10%));
+    --gradient-card: linear-gradient(135deg, hsl(0 0% 100%), hsl(210 40% 98%));
+    --gradient-subtle: linear-gradient(180deg, hsl(210 40% 98%), hsl(200 40% 96%));
     
     /* Shadows */
-    --shadow-glow: 0 0 40px hsl(258 89% 66% / 0.3);
-    --shadow-card: 0 8px 32px hsl(240 25% 8% / 0.4);
+    --shadow-glow: 0 0 40px hsl(258 89% 66% / 0.2);
+    --shadow-card: 0 4px 16px hsl(240 25% 8% / 0.1);
     
     /* Animation */
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);

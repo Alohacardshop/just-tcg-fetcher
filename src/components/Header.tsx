@@ -1,40 +1,55 @@
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Sparkles, Database, Download } from "lucide-react";
+import { Sparkles, Github, LogOut, User } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 export const Header = () => {
+  const { user, signOut } = useAuth();
+
+  const handleSignOut = async () => {
+    await signOut();
+  };
+
   return (
-    <header className="relative overflow-hidden bg-gradient-subtle border-b border-border">
-      <div className="container mx-auto px-6 py-12">
-        <div className="text-center space-y-6">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <Sparkles className="h-8 w-8 text-accent" />
-            <h1 className="text-4xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-              TCG Data Manager
-            </h1>
+    <header className="bg-card border-b border-border shadow-card">
+      <div className="container mx-auto px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-8 w-8 text-primary shadow-glow" />
+              <h1 className="text-2xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+                TCG Data Manager
+              </h1>
+            </div>
           </div>
           
-          <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Pull real-time trading card data from JustTCG API and manage your collection database with ease
-          </p>
-          
-          <div className="flex items-center justify-center gap-4 mt-8">
-            <Button size="lg" className="bg-gradient-primary text-primary-foreground shadow-glow">
-              <Database className="h-5 w-5 mr-2" />
-              Connect Database
-            </Button>
-            <Button variant="secondary" size="lg">
-              <Download className="h-5 w-5 mr-2" />
-              Import Data
+          <div className="flex items-center gap-4">
+            {user && (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <User className="h-4 w-4" />
+                  <span>{user.email}</span>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleSignOut}
+                  className="border-border hover:bg-accent/50"
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Sign Out
+                </Button>
+              </div>
+            )}
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="border-border hover:bg-accent/50"
+            >
+              <Github className="h-4 w-4 mr-2" />
+              GitHub
             </Button>
           </div>
         </div>
-      </div>
-      
-      {/* Decorative elements */}
-      <div className="absolute top-0 left-0 w-full h-full opacity-5 pointer-events-none">
-        <div className="absolute top-10 left-10 w-32 h-32 bg-gradient-primary rounded-full blur-3xl"></div>
-        <div className="absolute bottom-10 right-10 w-48 h-48 bg-gradient-legendary rounded-full blur-3xl"></div>
       </div>
     </header>
   );
