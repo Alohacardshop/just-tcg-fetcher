@@ -142,13 +142,14 @@ async function syncGames(supabaseClient: any, apiKey: string) {
 
   console.log(`Found ${games.length} games to sync`);
 
-  // Upsert games
+  // Upsert games with last_synced_at timestamp
   const gameRecords = games.map(game => ({
     jt_game_id: game.game_id || game.id?.toString(),
     name: game.name,
     slug: game.slug,
     sets_count: game.sets_count,
-    cards_count: game.cards_count
+    cards_count: game.cards_count,
+    last_synced_at: new Date().toISOString()
   }));
 
   const { data: upsertedGames, error } = await supabaseClient
@@ -237,7 +238,7 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
     throw new Error(`Database error: ${error.message}`);
   }
 
-  // Update games.sets_count with accurate count
+  // Update games.sets_count with accurate count and last_synced_at
   const { count: setsCount } = await supabaseClient
     .from('sets')
     .select('*', { count: 'exact', head: true })
@@ -246,7 +247,10 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
   if (setsCount !== null) {
     await supabaseClient
       .from('games')
-      .update({ sets_count: setsCount })
+      .update({ 
+        sets_count: setsCount,
+        last_synced_at: new Date().toISOString()
+      })
       .eq('id', gameData.id);
   }
 
@@ -257,24 +261,34 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
 async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
   console.log(`Syncing cards for set: ${setId}`);
 
-  // Get the set and game data - we need the set name and game JustTCG ID for the API call
-  const { data: setData, error: setError } = await supabaseClient
+  // Update set status to syncing
+  await supabaseClient
     .from('sets')
-    .select(`
-      id, 
-      game_id, 
-      name,
-      games!inner(jt_game_id)
-    `)
-    .eq('jt_set_id', setId)
-    .single();
+    .update({ 
+      sync_status: 'syncing',
+      last_sync_error: null
+    })
+    .eq('jt_set_id', setId);
 
-  if (setError || !setData) {
-    throw new Error(`Set not found: ${setId}`);
-  }
+  try {
+    // Get the set and game data - we need the set name and game JustTCG ID for the API call
+    const { data: setData, error: setError } = await supabaseClient
+      .from('sets')
+      .select(`
+        id, 
+        game_id, 
+        name,
+        games!inner(jt_game_id)
+      `)
+      .eq('jt_set_id', setId)
+      .single();
 
-  const gameId = setData.games.jt_game_id;
-  const setName = setData.name;
+    if (setError || !setData) {
+      throw new Error(`Set not found: ${setId}`);
+    }
+
+    const gameId = setData.games.jt_game_id;
+    const setName = setData.name;
   
   console.log(`Fetching cards for game: ${gameId}, set: ${setName}`);
 
@@ -370,12 +384,40 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     }
   }
 
-  console.log(`Successfully synced ${upsertedCards?.length || 0} cards and ${totalPrices} prices`);
-  return { 
-    synced: upsertedCards?.length || 0, 
-    cards: upsertedCards,
-    pricesSynced: totalPrices 
-  };
+    // Update set with successful sync status and card count
+    const { count: cardCount } = await supabaseClient
+      .from('cards')
+      .select('*', { count: 'exact', head: true })
+      .eq('set_id', setData.id);
+
+    await supabaseClient
+      .from('sets')
+      .update({ 
+        sync_status: 'success',
+        cards_synced_count: cardCount || 0,
+        last_synced_at: new Date().toISOString(),
+        last_sync_error: null
+      })
+      .eq('jt_set_id', setId);
+
+    console.log(`Successfully synced ${upsertedCards?.length || 0} cards and ${totalPrices} prices`);
+    return { 
+      synced: upsertedCards?.length || 0, 
+      cards: upsertedCards,
+      pricesSynced: totalPrices 
+    };
+  } catch (error) {
+    // Update set with error status
+    await supabaseClient
+      .from('sets')
+      .update({ 
+        sync_status: 'error',
+        last_sync_error: error.message?.substring(0, 255) || 'Unknown error'
+      })
+      .eq('jt_set_id', setId);
+    
+    throw error;
+  }
 }
 
 async function syncCardsBulk(supabaseClient: any, apiKey: string, setIds: string[]) {

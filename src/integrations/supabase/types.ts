@@ -130,6 +130,7 @@ export type Database = {
           created_at: string
           id: string
           jt_game_id: string
+          last_synced_at: string | null
           name: string
           sets_count: number | null
           slug: string | null
@@ -140,6 +141,7 @@ export type Database = {
           created_at?: string
           id?: string
           jt_game_id: string
+          last_synced_at?: string | null
           name: string
           sets_count?: number | null
           slug?: string | null
@@ -150,6 +152,7 @@ export type Database = {
           created_at?: string
           id?: string
           jt_game_id?: string
+          last_synced_at?: string | null
           name?: string
           sets_count?: number | null
           slug?: string | null
@@ -189,35 +192,47 @@ export type Database = {
       }
       sets: {
         Row: {
+          cards_synced_count: number
           code: string | null
           created_at: string
           game_id: string
           id: string
           jt_set_id: string
+          last_sync_error: string | null
+          last_synced_at: string | null
           name: string
           release_date: string | null
+          sync_status: string
           total_cards: number | null
           updated_at: string
         }
         Insert: {
+          cards_synced_count?: number
           code?: string | null
           created_at?: string
           game_id: string
           id?: string
           jt_set_id: string
+          last_sync_error?: string | null
+          last_synced_at?: string | null
           name: string
           release_date?: string | null
+          sync_status?: string
           total_cards?: number | null
           updated_at?: string
         }
         Update: {
+          cards_synced_count?: number
           code?: string | null
           created_at?: string
           game_id?: string
           id?: string
           jt_set_id?: string
+          last_sync_error?: string | null
+          last_synced_at?: string | null
           name?: string
           release_date?: string | null
+          sync_status?: string
           total_cards?: number | null
           updated_at?: string
         }

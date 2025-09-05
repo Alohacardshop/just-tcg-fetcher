@@ -29,6 +29,7 @@ interface Game {
   jt_game_id: string;
   sets_count: number;
   cards_count: number;
+  last_synced_at: string | null;
 }
 
 interface GameSet {
@@ -39,6 +40,10 @@ interface GameSet {
   total_cards: number;
   release_date: string;
   game_id: string;
+  sync_status: string;
+  cards_synced_count: number;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
 }
 
 export const DataImportPanel = () => {
@@ -57,6 +62,7 @@ export const DataImportPanel = () => {
   const [selectedSets, setSelectedSets] = useState<Map<string, Set<string>>>(new Map());
   const [setsSearchTerm, setSetsSearchTerm] = useState('');
   const [setsLoading, setSetsLoading] = useState<Set<string>>(new Set());
+  const [showUnsyncedOnly, setShowUnsyncedOnly] = useState(false);
 
   const { toast } = useToast();
 
@@ -127,10 +133,39 @@ export const DataImportPanel = () => {
     }
   }, [searchTerm, games]);
 
-  // Fetch games on component mount
+  // Fetch games on component mount and set up realtime subscriptions
   useEffect(() => {
     fetchGames();
-  }, []);
+    
+    // Subscribe to realtime updates for sets
+    const setsChannel = supabase
+      .channel('sets-changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'sets' 
+      }, (payload) => {
+        console.log('Sets realtime update:', payload);
+        // Refresh sets for the expanded game if affected
+        if (expandedGameId && payload.new) {
+          const updatedSet = payload.new as GameSet;
+          if (setsByGame.has(expandedGameId)) {
+            const currentSets = setsByGame.get(expandedGameId) || [];
+            const setIndex = currentSets.findIndex(s => s.id === updatedSet.id);
+            if (setIndex >= 0) {
+              const updatedSets = [...currentSets];
+              updatedSets[setIndex] = updatedSet;
+              setSetsByGame(prev => new Map(prev).set(expandedGameId, updatedSets));
+            }
+          }
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(setsChannel);
+    };
+  }, [expandedGameId]);
 
   const handleSyncGames = async () => {
     setIsImporting(true);
@@ -323,12 +358,24 @@ export const DataImportPanel = () => {
 
   const getFilteredSets = (gameId: string) => {
     const gameSets = setsByGame.get(gameId) || [];
-    if (!setsSearchTerm) return gameSets;
+    let filtered = gameSets;
     
-    return gameSets.filter(set => 
-      set.name.toLowerCase().includes(setsSearchTerm.toLowerCase()) ||
-      set.code?.toLowerCase().includes(setsSearchTerm.toLowerCase())
-    );
+    // Apply search filter
+    if (setsSearchTerm) {
+      filtered = filtered.filter(set => 
+        set.name.toLowerCase().includes(setsSearchTerm.toLowerCase()) ||
+        set.code?.toLowerCase().includes(setsSearchTerm.toLowerCase())
+      );
+    }
+    
+    // Apply unsynced filter
+    if (showUnsyncedOnly) {
+      filtered = filtered.filter(set => 
+        set.cards_synced_count === 0 || !set.last_synced_at
+      );
+    }
+    
+    return filtered;
   };
 
   const getSelectedCount = (gameId: string) => {
@@ -454,6 +501,9 @@ export const DataImportPanel = () => {
                               <span>ID: {game.jt_game_id}</span>
                               <span>Sets: {game.sets_count || 0}</span>
                               <span>Cards: {game.cards_count || 0}</span>
+                              {game.last_synced_at && (
+                                <span>Last synced: {new Date(game.last_synced_at).toLocaleDateString()}</span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -485,14 +535,26 @@ export const DataImportPanel = () => {
                           <>
                             {/* Sets toolbar */}
                             <div className="mb-4 space-y-3">
-                              <div className="relative">
-                                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                  placeholder="Search sets..."
-                                  value={setsSearchTerm}
-                                  onChange={(e) => setSetsSearchTerm(e.target.value)}
-                                  className="pl-9"
-                                />
+                              <div className="flex gap-3">
+                                <div className="relative flex-1">
+                                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                                  <Input
+                                    placeholder="Search sets..."
+                                    value={setsSearchTerm}
+                                    onChange={(e) => setSetsSearchTerm(e.target.value)}
+                                    className="pl-9"
+                                  />
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <Checkbox
+                                    id="show-unsynced"
+                                    checked={showUnsyncedOnly}
+                                    onCheckedChange={(checked) => setShowUnsyncedOnly(checked as boolean)}
+                                  />
+                                  <label htmlFor="show-unsynced" className="text-sm">
+                                    Unsynced only
+                                  </label>
+                                </div>
                               </div>
                               
                               {getFilteredSets(game.id).length > 0 && (
@@ -540,28 +602,57 @@ export const DataImportPanel = () => {
                               ) : (
                                 getFilteredSets(game.id).map((set) => {
                                   const isSelected = selectedSets.get(game.id)?.has(set.jt_set_id) || false;
+                                  const getStatusBadge = () => {
+                                    switch (set.sync_status) {
+                                      case 'syncing':
+                                        return <Badge variant="secondary" className="text-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Syncing</Badge>;
+                                      case 'success':
+                                        return <Badge variant="default" className="text-green-600"><CheckCircle className="h-3 w-3 mr-1" />Synced</Badge>;
+                                      case 'error':
+                                        return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" />Error</Badge>;
+                                      default:
+                                        return <Badge variant="outline">Not synced</Badge>;
+                                    }
+                                  };
+                                  
                                   return (
                                     <div key={set.id} className="flex items-center space-x-3 p-3 rounded border border-border/50 bg-background/30">
                                       <Checkbox
                                         checked={isSelected}
                                         onCheckedChange={(checked) => handleSetSelect(game.id, set.jt_set_id, checked as boolean)}
+                                        disabled={set.sync_status === 'syncing'}
                                       />
-                                      <div className="flex-1">
-                                        <h5 className="font-medium text-sm">{set.name}</h5>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                          <h5 className="font-medium text-sm truncate">{set.name}</h5>
+                                          {getStatusBadge()}
+                                        </div>
                                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
                                           {set.code && <span>Code: {set.code}</span>}
-                                          <span>Cards: {set.total_cards || 0}</span>
+                                          <span>Cards: {set.cards_synced_count}/{set.total_cards || 0}</span>
+                                          {set.last_synced_at && (
+                                            <span>Last synced: {new Date(set.last_synced_at).toLocaleDateString()}</span>
+                                          )}
                                           {set.release_date && <span>Released: {set.release_date}</span>}
                                         </div>
+                                        {set.last_sync_error && (
+                                          <div className="text-xs text-red-500 mt-1 truncate">
+                                            Error: {set.last_sync_error}
+                                          </div>
+                                        )}
                                       </div>
                                       <Button
                                         onClick={() => handleSyncCards(set.jt_set_id)}
-                                        disabled={isImporting}
+                                        disabled={isImporting || set.sync_status === 'syncing'}
                                         variant="outline"
                                         size="sm"
                                       >
-                                        <Download className="h-3 w-3 mr-1" />
-                                        Sync Cards
+                                        {set.sync_status === 'syncing' ? (
+                                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                        ) : (
+                                          <Download className="h-3 w-3 mr-1" />
+                                        )}
+                                        {set.sync_status === 'syncing' ? 'Syncing...' : 'Sync Cards'}
                                       </Button>
                                     </div>
                                   );
