@@ -1,6 +1,193 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry, buildJustTCGUrl } from '../justtcg-sync/api-helpers.ts';
+import Stripe from "https://esm.sh/stripe@14.21.0";
+
+// Helper functions for JustTCG API (copied from justtcg-sync for isolation)
+function getApiKey(): string {
+  const apiKey = Deno.env.get('JUSTTCG_API_KEY');
+  if (!apiKey) {
+    throw new Error('JUSTTCG_API_KEY not configured in environment');
+  }
+  return apiKey;
+}
+
+function createJustTCGHeaders(apiKey: string): HeadersInit {
+  if (!apiKey) {
+    throw new Error('API key is required');
+  }
+  
+  return {
+    'X-API-Key': apiKey,
+    'Content-Type': 'application/json'
+  };
+}
+
+function normalizeGameSlug(game: string): string {
+  if (!game || typeof game !== 'string') {
+    throw new Error('Game slug is required and must be a string');
+  }
+  
+  const normalized = game.toLowerCase().trim();
+  
+  switch (normalized) {
+    case 'pokemon-tcg':
+    case 'pokemon-english':
+    case 'pokemon-us':
+      return 'pokemon';
+    case 'pokemon-jp':
+    case 'pokemon-japanese':
+      return 'pokemon-japan';
+    case 'magic':
+    case 'magic-the-gathering':
+    case 'mtg-english':
+      return 'mtg';
+    case 'one-piece':
+    case 'one-piece-tcg':
+      return 'one-piece-card-game';
+    case 'lorcana':
+    case 'disney-lorcana-tcg':
+      return 'disney-lorcana';
+    case 'star-wars':
+    case 'swu':
+      return 'star-wars-unlimited';
+    default:
+      return normalized;
+  }
+}
+
+function buildJustTCGUrl(endpoint: string, params: Record<string, string | number> = {}): string {
+  const url = new URL(`https://api.justtcg.com/v1/${endpoint}`);
+  
+  if (params.game) {
+    params.game = normalizeGameSlug(params.game.toString());
+  }
+  
+  Object.entries(params).forEach(([key, value]) => {
+    url.searchParams.set(key, value.toString());
+  });
+  
+  return url.toString();
+}
+
+async function fetchJsonWithRetry(
+  url: string, 
+  init: RequestInit = {}, 
+  options: { tries?: number; baseDelayMs?: number; timeoutMs?: number } = {}
+): Promise<any> {
+  const { tries = 3, baseDelayMs = 500, timeoutMs = 30000 } = options;
+  
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    const startTime = Date.now();
+    let timedOut = false;
+    
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+      
+      console.log(`🔄 Attempt ${attempt}/${tries} for ${url}`);
+      
+      const response = await fetch(url, {
+        ...init,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      const duration = Date.now() - startTime;
+      
+      if (response.ok) {
+        console.log(`✅ Success on attempt ${attempt} (${duration}ms): ${url}`);
+        return await response.json();
+      }
+      
+      if (response.status === 429 || response.status >= 500) {
+        const errorText = await response.text();
+        lastError = new Error(`HTTP ${response.status}: ${errorText}`);
+        
+        console.warn(`⚠️ Retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
+        
+        if (attempt < tries) {
+          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+          console.log(`⏰ Waiting ${delayMs}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          continue;
+        }
+      } else {
+        const errorText = await response.text();
+        console.error(`❌ Non-retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
+        throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
+      }
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      
+      if (error.name === 'AbortError' || timedOut) {
+        lastError = new Error(`Request timed out after ${timeoutMs}ms`);
+        console.error(`⏰ Timeout on attempt ${attempt} (${duration}ms): ${url}`);
+      } else {
+        lastError = error as Error;
+        console.error(`❌ Network error on attempt ${attempt} (${duration}ms):`, error.message);
+      }
+      
+      if (attempt < tries) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
+        console.log(`⏰ Waiting ${delayMs}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  
+  console.error(`💥 All ${tries} attempts failed for ${url}`);
+  throw lastError || new Error('All retry attempts failed');
+}
+
+function extractDataFromEnvelope(response: any): { data: any[], hasMore?: boolean } {
+  if (Array.isArray(response)) {
+    return { data: response };
+  }
+  
+  const patterns = ['data', 'results', 'items', 'sets', 'cards', 'games'];
+  
+  for (const pattern of patterns) {
+    if (response[pattern] && Array.isArray(response[pattern])) {
+      const hasMore = response.meta?.hasMore ?? 
+                     response._metadata?.hasMore ?? 
+                     response.pagination?.hasMore ??
+                     undefined;
+      
+      return { 
+        data: response[pattern], 
+        hasMore 
+      };
+    }
+  }
+  
+  if (response.data) {
+    for (const pattern of patterns) {
+      if (response.data[pattern] && Array.isArray(response.data[pattern])) {
+        const hasMore = response.data.meta?.hasMore ?? 
+                       response.data._metadata?.hasMore ?? 
+                       response.data.pagination?.hasMore ??
+                       response.meta?.hasMore ?? 
+                       response._metadata?.hasMore ?? 
+                       response.pagination?.hasMore ??
+                       undefined;
+        
+        return { 
+          data: response.data[pattern], 
+          hasMore 
+        };
+      }
+    }
+  }
+  
+  console.warn('Could not extract data from response envelope:', Object.keys(response));
+  return { data: [] };
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
