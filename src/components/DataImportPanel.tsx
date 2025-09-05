@@ -334,40 +334,59 @@ export const DataImportPanel = () => {
     }
   };
 
-  const handleFullGameSync = async (gameId: string) => {
+  const handleFullGameSync = async (gameJtId: string) => {
     setIsImporting(true);
     setImportProgress(0);
     
     try {
-      // First sync sets
+      // Resolve internal UUID for DB operations
+      let internalGameId = games.find(g => g.jt_game_id === gameJtId)?.id;
+      if (!internalGameId) {
+        const { data: gameRow, error: gameErr } = await supabase
+          .from('games')
+          .select('id')
+          .eq('jt_game_id', gameJtId)
+          .maybeSingle();
+        if (gameErr) throw gameErr;
+        internalGameId = gameRow?.id || null;
+      }
+      if (!internalGameId) {
+        throw new Error('Game not found locally after syncing sets.');
+      }
+
+      // First sync sets via JT game id
       toast({
         title: "Full Sync Started",
         description: "Syncing sets and then all cards for this game...",
       });
 
       const { data: setsData, error: setsError } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-sets', gameId }
+        body: { action: 'sync-sets', gameId: gameJtId }
       });
 
       if (setsError) throw setsError;
 
-      await fetchSets(gameId); // Refresh sets data
+      // Refresh sets data for this game (using internal UUID)
+      await fetchSets(internalGameId);
       
       // Then get all sets and sync their cards
-      const { data: sets } = await supabase
+      const { data: sets, error: setsQueryError } = await supabase
         .from('sets')
         .select('jt_set_id')
-        .eq('game_id', gameId);
+        .eq('game_id', internalGameId);
+      if (setsQueryError) throw setsQueryError;
 
       if (sets && sets.length > 0) {
-        // Add sets to selected sets for this game
         const setIds = sets.map(s => s.jt_set_id);
-        const newSelectedSets = new Map(selectedSets);
-        newSelectedSets.set(gameId, new Set(setIds));
-        setSelectedSets(newSelectedSets);
+        // Store selections keyed by internal game UUID
+        setSelectedSets(prev => {
+          const newMap = new Map(prev);
+          newMap.set(internalGameId!, new Set(setIds));
+          return newMap;
+        });
         
-        // Then bulk sync
-        await handleBulkSyncCards(gameId);
+        // Bulk sync using internal UUID key
+        await handleBulkSyncCards(internalGameId);
       }
 
       toast({
