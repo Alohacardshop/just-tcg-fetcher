@@ -91,7 +91,7 @@ export const SearchFilters = ({ onSearch, games }: SearchFiltersProps) => {
               <SelectValue placeholder="All games" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All games</SelectItem>
+              <SelectItem value="all">All games</SelectItem>
               {games.map((game) => (
                 <SelectItem key={game.game_id} value={game.game_id}>
                   {game.name}
@@ -108,7 +108,7 @@ export const SearchFilters = ({ onSearch, games }: SearchFiltersProps) => {
               <SelectValue placeholder="Any condition" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Any condition</SelectItem>
+              <SelectItem value="all">Any condition</SelectItem>
               {conditions.map((condition) => (
                 <SelectItem key={condition.value} value={condition.value}>
                   {condition.label}
@@ -125,7 +125,7 @@ export const SearchFilters = ({ onSearch, games }: SearchFiltersProps) => {
               <SelectValue placeholder="Any printing" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Any printing</SelectItem>
+              <SelectItem value="all">Any printing</SelectItem>
               {printings.map((printing) => (
                 <SelectItem key={printing.value} value={printing.value}>
                   {printing.label}
