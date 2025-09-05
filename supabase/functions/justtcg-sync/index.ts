@@ -379,85 +379,19 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
 
     console.log(`Total cards fetched across ${page} pages: ${allCards.length}`);
 
-    // Fetch sealed products with pagination - try multiple endpoints
+    // Per docs: Sealed items are represented as variants (condition: "Sealed") on cards.
+    // We intentionally skip separate sealed endpoints and rely solely on the cards endpoint.
     let allSealed: SealedProduct[] = [];
-    console.log(`Fetching sealed products for game: ${gameId}, set: ${setName}`);
+    console.log('Skipping sealed endpoint fetch; sealed variants will be captured within card variants.');
     
-    const sealedEndpoints = [
-      'https://api.justtcg.com/v1/sealed',
-      'https://api.justtcg.com/v1/sealed-products',
-      'https://api.justtcg.com/v1/products'
-    ];
+    // Log totals for visibility
+    const totalItems = allCards.length;
+    console.log(`Total items from cards endpoint: ${allCards.length}`);
     
-    let sealedFetched = false;
-    
-    for (const endpoint of sealedEndpoints) {
-      if (sealedFetched) break;
-      
-      try {
-        console.log(`Trying sealed endpoint: ${endpoint}`);
-        page = 1;
-        hasMore = true;
-
-        while (hasMore) {
-          const url = new URL(endpoint);
-          url.searchParams.set('game', gameId);
-          url.searchParams.set('set', setName);
-          url.searchParams.set('limit', limit.toString());
-          url.searchParams.set('page', page.toString());
-
-          console.log(`Fetching page ${page} of sealed products...`);
-
-          const response = await fetch(url.toString(), {
-            headers: { 'X-API-KEY': apiKey }
-          });
-
-          if (!response.ok) {
-            console.log(`Sealed endpoint ${endpoint} returned ${response.status}`);
-            break; // Try next endpoint
-          }
-
-          const responseData = await response.json();
-          
-          // Parse response - try different shapes
-          const pageSealed: SealedProduct[] = responseData.data || responseData.sealed || responseData.products || responseData || [];
-          console.log(`Page ${page}: Found ${pageSealed.length} sealed products from ${endpoint}`);
-          
-          if (pageSealed.length === 0) {
-            hasMore = false;
-          } else {
-            allSealed = allSealed.concat(pageSealed);
-            sealedFetched = true; // Mark as successful
-            
-            if (pageSealed.length < limit) {
-              hasMore = false;
-            } else {
-              page++;
-            }
-            
-            if (page > 20) {
-              console.warn('Reached maximum page limit (20) for sealed, stopping pagination');
-              hasMore = false;
-            }
-          }
-        }
-        
-        if (allSealed.length > 0) {
-          console.log(`Successfully fetched sealed products from ${endpoint}`);
-          break; // Exit endpoint loop if we got data
-        }
-      } catch (error) {
-        console.log(`Sealed endpoint ${endpoint} failed:`, error.message);
-        continue; // Try next endpoint
-      }
+    // Warn if we expected more items (optional informational log)
+    if (expectedTotalCards && totalItems !== expectedTotalCards) {
+      console.warn(`Item count mismatch vs set.total_cards. Expected: ${expectedTotalCards}, From cards: ${totalItems}`);
     }
-
-    console.log(`Total sealed products fetched: ${allSealed.length}`);
-    
-    // Log total counts
-    const totalItems = allCards.length + allSealed.length;
-    console.log(`Total items: ${allCards.length} singles + ${allSealed.length} sealed = ${totalItems}`);
-    
     // Log discrepancy if expected vs actual count differs
     if (expectedTotalCards && totalItems !== expectedTotalCards) {
       console.warn(`Item count mismatch! Expected: ${expectedTotalCards}, Fetched: ${totalItems} (${allCards.length} singles + ${allSealed.length} sealed)`);
