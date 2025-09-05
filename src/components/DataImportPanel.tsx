@@ -2,21 +2,61 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { Upload, Download, Database, Play, Pause, CheckCircle, AlertCircle, Search } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { 
+  Upload, 
+  Download, 
+  Database, 
+  Play, 
+  Pause, 
+  CheckCircle, 
+  AlertCircle, 
+  Search, 
+  ChevronDown, 
+  ChevronRight,
+  Package,
+  Loader2
+} from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+
+interface Game {
+  id: string;
+  name: string;
+  jt_game_id: string;
+  sets_count: number;
+  cards_count: number;
+}
+
+interface GameSet {
+  id: string;
+  jt_set_id: string;
+  name: string;
+  code: string;
+  total_cards: number;
+  release_date: string;
+  game_id: string;
+}
 
 export const DataImportPanel = () => {
   const [importProgress, setImportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
-  const [games, setGames] = useState<any[]>([]);
-  const [filteredGames, setFilteredGames] = useState<any[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
+  
+  const [games, setGames] = useState<Game[]>([]);
+  const [filteredGames, setFilteredGames] = useState<Game[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Sets management
+  const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
+  const [setsByGame, setSetsByGame] = useState<Map<string, GameSet[]>>(new Map());
+  const [selectedSets, setSelectedSets] = useState<Map<string, Set<string>>>(new Map());
+  const [setsSearchTerm, setSetsSearchTerm] = useState('');
+  const [setsLoading, setSetsLoading] = useState<Set<string>>(new Set());
 
   const { toast } = useToast();
 
@@ -42,6 +82,35 @@ export const DataImportPanel = () => {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Fetch sets for a specific game
+  const fetchSets = async (gameId: string) => {
+    setSetsLoading(prev => new Set(prev).add(gameId));
+    try {
+      const { data, error } = await supabase
+        .from('sets')
+        .select('*')
+        .eq('game_id', gameId)
+        .order('name');
+      
+      if (error) throw error;
+      
+      setSetsByGame(prev => new Map(prev).set(gameId, data || []));
+    } catch (error) {
+      console.error('Error fetching sets:', error);
+      toast({
+        title: "Error",
+        description: "Failed to fetch sets",
+        variant: "destructive",
+      });
+    } finally {
+      setSetsLoading(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(gameId);
+        return newSet;
+      });
     }
   };
 
@@ -110,6 +179,15 @@ export const DataImportPanel = () => {
         title: "Sets Synced",
         description: `Successfully synced ${data.synced} sets from JustTCG`,
       });
+      
+      // Refresh games list to update sets count
+      fetchGames();
+      
+      // Refresh sets for this game if expanded
+      const game = games.find(g => g.jt_game_id === gameId);
+      if (game && expandedGameId === game.id) {
+        fetchSets(game.id);
+      }
     } catch (error) {
       console.error('Error syncing sets:', error);
       toast({
@@ -148,6 +226,120 @@ export const DataImportPanel = () => {
     } finally {
       setIsImporting(false);
     }
+  };
+
+  const handleBulkSyncCards = async (gameId: string) => {
+    const gameSelectedSets = selectedSets.get(gameId);
+    if (!gameSelectedSets || gameSelectedSets.size === 0) return;
+
+    const setIds = Array.from(gameSelectedSets);
+    setIsImporting(true);
+    setBulkProgress({ current: 0, total: setIds.length });
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
+        body: { action: 'sync-cards-bulk', setIds }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Bulk Sync Complete",
+        description: `Processed ${data.processedSets}/${data.totalSets} sets, synced ${data.totalCards} cards and ${data.totalPrices} prices`,
+      });
+      
+      // Clear selections
+      setSelectedSets(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(gameId);
+        return newMap;
+      });
+    } catch (error) {
+      console.error('Error bulk syncing cards:', error);
+      toast({
+        title: "Bulk Sync Failed",
+        description: error.message || "Failed to bulk sync cards",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+      setBulkProgress(null);
+    }
+  };
+
+  const handleGameExpand = (gameId: string) => {
+    if (expandedGameId === gameId) {
+      setExpandedGameId(null);
+    } else {
+      setExpandedGameId(gameId);
+      if (!setsByGame.has(gameId)) {
+        fetchSets(gameId);
+      }
+    }
+  };
+
+  const handleSetSelect = (gameId: string, setId: string, checked: boolean) => {
+    setSelectedSets(prev => {
+      const newMap = new Map(prev);
+      const gameSelections = newMap.get(gameId) || new Set<string>();
+      
+      if (checked) {
+        gameSelections.add(setId);
+      } else {
+        gameSelections.delete(setId);
+      }
+      
+      if (gameSelections.size > 0) {
+        newMap.set(gameId, gameSelections);
+      } else {
+        newMap.delete(gameId);
+      }
+      
+      return newMap;
+    });
+  };
+
+  const handleSelectAllSets = (gameId: string, checked: boolean) => {
+    const gameSets = setsByGame.get(gameId) || [];
+    const filteredSets = gameSets.filter(set => 
+      !setsSearchTerm || 
+      set.name.toLowerCase().includes(setsSearchTerm.toLowerCase()) ||
+      set.code?.toLowerCase().includes(setsSearchTerm.toLowerCase())
+    );
+    
+    setSelectedSets(prev => {
+      const newMap = new Map(prev);
+      
+      if (checked) {
+        const gameSelections = new Set(filteredSets.map(set => set.jt_set_id));
+        newMap.set(gameId, gameSelections);
+      } else {
+        newMap.delete(gameId);
+      }
+      
+      return newMap;
+    });
+  };
+
+  const getFilteredSets = (gameId: string) => {
+    const gameSets = setsByGame.get(gameId) || [];
+    if (!setsSearchTerm) return gameSets;
+    
+    return gameSets.filter(set => 
+      set.name.toLowerCase().includes(setsSearchTerm.toLowerCase()) ||
+      set.code?.toLowerCase().includes(setsSearchTerm.toLowerCase())
+    );
+  };
+
+  const getSelectedCount = (gameId: string) => {
+    return selectedSets.get(gameId)?.size || 0;
+  };
+
+  const isAllSelected = (gameId: string) => {
+    const filteredSets = getFilteredSets(gameId);
+    const gameSelectedSets = selectedSets.get(gameId);
+    return filteredSets.length > 0 && gameSelectedSets && 
+           filteredSets.every(set => gameSelectedSets.has(set.jt_set_id));
   };
 
   const importMethods = [
@@ -210,7 +402,7 @@ export const DataImportPanel = () => {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Imported Games</CardTitle>
-              <CardDescription>Select a game to sync its sets</CardDescription>
+              <CardDescription>Expand games to view and sync sets</CardDescription>
             </div>
             <Badge variant="outline">{filteredGames.length} games</Badge>
           </div>
@@ -241,29 +433,147 @@ export const DataImportPanel = () => {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {filteredGames.map((game) => (
-                <div key={game.id} className="flex items-center justify-between p-4 rounded-lg border border-border bg-background/50 hover:bg-background/80 transition-colors">
-                  <div className="flex-1">
-                    <h4 className="font-medium text-foreground">{game.name}</h4>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
-                      <span>ID: {game.jt_game_id}</span>
-                      <span>Sets: {game.sets_count || 0}</span>
-                      <span>Cards: {game.cards_count || 0}</span>
-                    </div>
+                <Collapsible 
+                  key={game.id} 
+                  open={expandedGameId === game.id}
+                  onOpenChange={() => handleGameExpand(game.id)}
+                >
+                  <div className="rounded-lg border border-border bg-background/50 hover:bg-background/80 transition-colors">
+                    <CollapsibleTrigger asChild>
+                      <div className="flex items-center justify-between p-4 cursor-pointer">
+                        <div className="flex items-center gap-3 flex-1">
+                          {expandedGameId === game.id ? 
+                            <ChevronDown className="h-4 w-4 text-muted-foreground" /> : 
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          }
+                          <div className="flex-1">
+                            <h4 className="font-medium text-foreground">{game.name}</h4>
+                            <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                              <span>ID: {game.jt_game_id}</span>
+                              <span>Sets: {game.sets_count || 0}</span>
+                              <span>Cards: {game.cards_count || 0}</span>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <Button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSyncSets(game.jt_game_id);
+                          }}
+                          disabled={isImporting}
+                          variant="outline"
+                          size="sm"
+                          className="ml-4"
+                        >
+                          <Download className="h-4 w-4 mr-2" />
+                          Sync Sets
+                        </Button>
+                      </div>
+                    </CollapsibleTrigger>
+                    
+                    <CollapsibleContent>
+                      <div className="border-t border-border p-4 bg-muted/20">
+                        {setsLoading.has(game.id) ? (
+                          <div className="text-center py-8">
+                            <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
+                            <p className="text-sm text-muted-foreground mt-2">Loading sets...</p>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Sets toolbar */}
+                            <div className="mb-4 space-y-3">
+                              <div className="relative">
+                                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  placeholder="Search sets..."
+                                  value={setsSearchTerm}
+                                  onChange={(e) => setSetsSearchTerm(e.target.value)}
+                                  className="pl-9"
+                                />
+                              </div>
+                              
+                              {getFilteredSets(game.id).length > 0 && (
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-4">
+                                    <div className="flex items-center space-x-2">
+                                      <Checkbox
+                                        id={`select-all-${game.id}`}
+                                        checked={isAllSelected(game.id)}
+                                        onCheckedChange={(checked) => handleSelectAllSets(game.id, checked as boolean)}
+                                      />
+                                      <label htmlFor={`select-all-${game.id}`} className="text-sm font-medium">
+                                        Select All
+                                      </label>
+                                    </div>
+                                    <Badge variant="outline">
+                                      {getSelectedCount(game.id)} / {getFilteredSets(game.id).length} selected
+                                    </Badge>
+                                  </div>
+                                  
+                                  {getSelectedCount(game.id) > 0 && (
+                                    <Button
+                                      onClick={() => handleBulkSyncCards(game.id)}
+                                      disabled={isImporting}
+                                      size="sm"
+                                      className="bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground"
+                                    >
+                                      <Package className="h-4 w-4 mr-2" />
+                                      Sync Selected Sets ({getSelectedCount(game.id)})
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            
+                            {/* Sets list */}
+                            <div className="space-y-2">
+                              {getFilteredSets(game.id).length === 0 ? (
+                                <div className="text-center py-6">
+                                  <Package className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
+                                  <p className="text-sm text-muted-foreground">
+                                    {setsSearchTerm ? 'No sets found matching your search' : 'No sets found. Sync sets first.'}
+                                  </p>
+                                </div>
+                              ) : (
+                                getFilteredSets(game.id).map((set) => {
+                                  const isSelected = selectedSets.get(game.id)?.has(set.jt_set_id) || false;
+                                  return (
+                                    <div key={set.id} className="flex items-center space-x-3 p-3 rounded border border-border/50 bg-background/30">
+                                      <Checkbox
+                                        checked={isSelected}
+                                        onCheckedChange={(checked) => handleSetSelect(game.id, set.jt_set_id, checked as boolean)}
+                                      />
+                                      <div className="flex-1">
+                                        <h5 className="font-medium text-sm">{set.name}</h5>
+                                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                          {set.code && <span>Code: {set.code}</span>}
+                                          <span>Cards: {set.total_cards || 0}</span>
+                                          {set.release_date && <span>Released: {set.release_date}</span>}
+                                        </div>
+                                      </div>
+                                      <Button
+                                        onClick={() => handleSyncCards(set.jt_set_id)}
+                                        disabled={isImporting}
+                                        variant="outline"
+                                        size="sm"
+                                      >
+                                        <Download className="h-3 w-3 mr-1" />
+                                        Sync Cards
+                                      </Button>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </CollapsibleContent>
                   </div>
-                  
-                  <Button
-                    onClick={() => handleSyncSets(game.jt_game_id)}
-                    disabled={isImporting}
-                    variant="outline"
-                    size="sm"
-                    className="ml-4"
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    Sync Sets
-                  </Button>
-                </div>
+                </Collapsible>
               ))}
             </div>
           )}
@@ -271,21 +581,31 @@ export const DataImportPanel = () => {
       </Card>
 
       {/* Import Status */}
-      {importProgress > 0 && (
+      {(importProgress > 0 || bulkProgress) && (
         <Card className="bg-gradient-card border-border shadow-card">
           <div className="p-6">
             <div className="flex items-center gap-2 mb-4">
-              {importProgress === 100 ? (
+              {importProgress === 100 && !bulkProgress ? (
                 <CheckCircle className="h-5 w-5 text-green-500" />
               ) : (
                 <AlertCircle className="h-5 w-5 text-accent" />
               )}
               <h3 className="text-lg font-semibold">
-                {importProgress === 100 ? "Sync Complete" : "Sync in Progress"}
+                {importProgress === 100 && !bulkProgress ? "Sync Complete" : "Sync in Progress"}
               </h3>
             </div>
             
-            {importProgress < 100 && (
+            {bulkProgress && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Bulk Sync Progress</span>
+                  <span className="text-sm text-muted-foreground">{bulkProgress.current}/{bulkProgress.total} sets</span>
+                </div>
+                <Progress value={(bulkProgress.current / bulkProgress.total) * 100} className="h-2" />
+              </div>
+            )}
+            
+            {importProgress < 100 && !bulkProgress && (
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Progress</span>

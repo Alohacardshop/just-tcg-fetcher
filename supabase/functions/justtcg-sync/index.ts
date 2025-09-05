@@ -63,8 +63,8 @@ serve(async (req) => {
       );
     }
 
-    const { action, gameId, setId } = await req.json();
-    console.log(`Starting JustTCG sync action: ${action}`, { gameId, setId });
+    const { action, gameId, setId, setIds } = await req.json();
+    console.log(`Starting JustTCG sync action: ${action}`, { gameId, setId, setIds });
 
     let result = {};
 
@@ -79,6 +79,10 @@ serve(async (req) => {
       case 'sync-cards':
         if (!setId) throw new Error('setId required for sync-cards');
         result = await syncCards(supabaseClient, apiKey, setId);
+        break;
+      case 'sync-cards-bulk':
+        if (!setIds || !Array.isArray(setIds)) throw new Error('setIds array required for sync-cards-bulk');
+        result = await syncCardsBulk(supabaseClient, apiKey, setIds);
         break;
       default:
         throw new Error(`Unknown action: ${action}`);
@@ -233,8 +237,21 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
     throw new Error(`Database error: ${error.message}`);
   }
 
+  // Update games.sets_count with accurate count
+  const { count: setsCount } = await supabaseClient
+    .from('sets')
+    .select('*', { count: 'exact', head: true })
+    .eq('game_id', gameData.id);
+
+  if (setsCount !== null) {
+    await supabaseClient
+      .from('games')
+      .update({ sets_count: setsCount })
+      .eq('id', gameData.id);
+  }
+
   console.log(`Successfully synced ${upsertedSets?.length || 0} sets`);
-  return { synced: upsertedSets?.length || 0, sets: upsertedSets };
+  return { synced: upsertedSets?.length || 0, sets: upsertedSets, gameId, setsCount };
 }
 
 async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
@@ -329,5 +346,37 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     synced: upsertedCards?.length || 0, 
     cards: upsertedCards,
     pricesSynced: totalPrices 
+  };
+}
+
+async function syncCardsBulk(supabaseClient: any, apiKey: string, setIds: string[]) {
+  console.log(`Bulk syncing cards for ${setIds.length} sets`);
+  
+  const results = [];
+  let totalCards = 0;
+  let totalPrices = 0;
+  let processedSets = 0;
+  
+  for (const setId of setIds) {
+    try {
+      const result = await syncCards(supabaseClient, apiKey, setId);
+      results.push({ setId, success: true, cards: result.synced, prices: result.pricesSynced });
+      totalCards += result.synced;
+      totalPrices += result.pricesSynced;
+      processedSets++;
+      console.log(`Processed set ${processedSets}/${setIds.length}: ${setId}`);
+    } catch (error) {
+      console.error(`Failed to sync set ${setId}:`, error);
+      results.push({ setId, success: false, error: error.message });
+    }
+  }
+  
+  console.log(`Bulk sync complete: ${processedSets}/${setIds.length} sets, ${totalCards} cards, ${totalPrices} prices`);
+  return {
+    totalSets: setIds.length,
+    processedSets,
+    totalCards,
+    totalPrices,
+    results
   };
 }
