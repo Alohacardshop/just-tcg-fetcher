@@ -14,6 +14,149 @@ export type Database = {
   }
   public: {
     Tables: {
+      card_prices: {
+        Row: {
+          card_id: string
+          condition: string | null
+          created_at: string
+          currency: string
+          fetched_at: string
+          high_price: number | null
+          id: string
+          low_price: number | null
+          market_price: number | null
+          source: string
+          updated_at: string
+          variant: string | null
+        }
+        Insert: {
+          card_id: string
+          condition?: string | null
+          created_at?: string
+          currency?: string
+          fetched_at?: string
+          high_price?: number | null
+          id?: string
+          low_price?: number | null
+          market_price?: number | null
+          source?: string
+          updated_at?: string
+          variant?: string | null
+        }
+        Update: {
+          card_id?: string
+          condition?: string | null
+          created_at?: string
+          currency?: string
+          fetched_at?: string
+          high_price?: number | null
+          id?: string
+          low_price?: number | null
+          market_price?: number | null
+          source?: string
+          updated_at?: string
+          variant?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "card_prices_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cards: {
+        Row: {
+          created_at: string
+          data: Json | null
+          game_id: string
+          id: string
+          image_url: string | null
+          jt_card_id: string
+          name: string
+          number: string | null
+          rarity: string | null
+          set_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          data?: Json | null
+          game_id: string
+          id?: string
+          image_url?: string | null
+          jt_card_id: string
+          name: string
+          number?: string | null
+          rarity?: string | null
+          set_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          data?: Json | null
+          game_id?: string
+          id?: string
+          image_url?: string | null
+          jt_card_id?: string
+          name?: string
+          number?: string | null
+          rarity?: string | null
+          set_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cards_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cards_set_id_fkey"
+            columns: ["set_id"]
+            isOneToOne: false
+            referencedRelation: "sets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      games: {
+        Row: {
+          cards_count: number | null
+          created_at: string
+          id: string
+          jt_game_id: string
+          name: string
+          sets_count: number | null
+          slug: string | null
+          updated_at: string
+        }
+        Insert: {
+          cards_count?: number | null
+          created_at?: string
+          id?: string
+          jt_game_id: string
+          name: string
+          sets_count?: number | null
+          slug?: string | null
+          updated_at?: string
+        }
+        Update: {
+          cards_count?: number | null
+          created_at?: string
+          id?: string
+          jt_game_id?: string
+          name?: string
+          sets_count?: number | null
+          slug?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -43,6 +186,50 @@ export type Database = {
           username?: string | null
         }
         Relationships: []
+      }
+      sets: {
+        Row: {
+          code: string | null
+          created_at: string
+          game_id: string
+          id: string
+          jt_set_id: string
+          name: string
+          release_date: string | null
+          total_cards: number | null
+          updated_at: string
+        }
+        Insert: {
+          code?: string | null
+          created_at?: string
+          game_id: string
+          id?: string
+          jt_set_id: string
+          name: string
+          release_date?: string | null
+          total_cards?: number | null
+          updated_at?: string
+        }
+        Update: {
+          code?: string | null
+          created_at?: string
+          game_id?: string
+          id?: string
+          jt_set_id?: string
+          name?: string
+          release_date?: string | null
+          total_cards?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sets_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
