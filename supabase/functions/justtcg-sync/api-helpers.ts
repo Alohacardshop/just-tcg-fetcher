@@ -295,29 +295,6 @@ export async function fetchPaginatedData<T = any>(
     stoppedReason
   };
 }
-      
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      
-      if (error.name === 'AbortError' || timedOut) {
-        lastError = new Error(`Request timed out after ${timeoutMs}ms`);
-        console.error(`⏰ Timeout on attempt ${attempt} (${duration}ms): ${url}`);
-      } else {
-        lastError = error as Error;
-        console.error(`❌ Network error on attempt ${attempt} (${duration}ms):`, error.message);
-      }
-      
-      if (attempt < tries) {
-        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-        console.log(`⏰ Waiting ${delayMs}ms before retry...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
-    }
-  }
-  
-  console.error(`💥 All ${tries} attempts failed for ${url}`);
-  throw lastError || new Error('All retry attempts failed');
-}
 
 /**
  * Validates that headers contain the required API key header
