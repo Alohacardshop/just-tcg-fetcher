@@ -166,6 +166,7 @@ export type Database = {
           created_at: string
           full_name: string | null
           id: string
+          is_admin: boolean | null
           updated_at: string
           user_id: string
           username: string | null
@@ -175,6 +176,7 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id?: string
+          is_admin?: boolean | null
           updated_at?: string
           user_id: string
           username?: string | null
@@ -184,6 +186,7 @@ export type Database = {
           created_at?: string
           full_name?: string | null
           id?: string
+          is_admin?: boolean | null
           updated_at?: string
           user_id?: string
           username?: string | null
@@ -245,6 +248,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sync_control: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          operation_id: string
+          operation_type: string
+          should_cancel: boolean | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          operation_id: string
+          operation_type: string
+          should_cancel?: boolean | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          operation_id?: string
+          operation_type?: string
+          should_cancel?: boolean | null
+          updated_at?: string
+        }
+        Relationships: []
       }
     }
     Views: {

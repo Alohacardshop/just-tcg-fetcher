@@ -82,7 +82,8 @@ serve(async (req) => {
         break;
       case 'sync-cards-bulk':
         if (!setIds || !Array.isArray(setIds)) throw new Error('setIds array required for sync-cards-bulk');
-        result = await syncCardsBulk(supabaseClient, apiKey, setIds);
+        const { operationId } = body;
+        result = await syncCardsBulk(supabaseClient, apiKey, setIds, operationId);
         break;
       default:
         throw new Error(`Unknown action: ${action}`);
@@ -420,8 +421,8 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
   }
 }
 
-async function syncCardsBulk(supabaseClient: any, apiKey: string, setIds: string[]) {
-  console.log(`Bulk syncing cards for ${setIds.length} sets`);
+async function syncCardsBulk(supabaseClient: any, apiKey: string, setIds: string[], operationId?: string) {
+  console.log(`Bulk syncing cards for ${setIds.length} sets with operation ID: ${operationId}`);
   
   const results = [];
   let totalCards = 0;
@@ -429,6 +430,27 @@ async function syncCardsBulk(supabaseClient: any, apiKey: string, setIds: string
   let processedSets = 0;
   
   for (const setId of setIds) {
+    // Check for cancellation signal if operation ID provided
+    if (operationId) {
+      try {
+        const { data: cancelCheck } = await supabaseClient
+          .from('sync_control')
+          .select('should_cancel')
+          .eq('operation_type', 'bulk_sync')
+          .eq('operation_id', operationId)
+          .single();
+        
+        if (cancelCheck?.should_cancel) {
+          console.log(`Operation ${operationId} cancelled by admin`);
+          results.push({ setId, success: false, error: 'Operation cancelled by admin' });
+          continue;
+        }
+      } catch (error) {
+        // If sync_control check fails, continue with sync
+        console.log('Could not check cancellation status, continuing:', error);
+      }
+    }
+    
     try {
       const result = await syncCards(supabaseClient, apiKey, setId);
       results.push({ setId, success: true, cards: result.synced, prices: result.pricesSynced });

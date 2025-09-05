@@ -20,10 +20,12 @@ import {
   Package,
   Loader2,
   FileText,
-  X
+  X,
+  Shield
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/useAuth';
 import { CardDataModal } from './CardDataModal';
 
 interface Game {
@@ -54,11 +56,13 @@ export const DataImportPanel = () => {
   const [isImporting, setIsImporting] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number; successful: number; failed: number } | null>(null);
   const [bulkCancelRequested, setBulkCancelRequested] = useState(false);
+  const [currentOperationId, setCurrentOperationId] = useState<string | null>(null);
   
   const [games, setGames] = useState<Game[]>([]);
   const [filteredGames, setFilteredGames] = useState<Game[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   
   // Sets management
   const [expandedGameId, setExpandedGameId] = useState<string | null>(null);
@@ -73,6 +77,57 @@ export const DataImportPanel = () => {
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
 
   const { toast } = useToast();
+  const { user } = useAuth();
+
+  // Check if user is admin
+  const checkAdminStatus = async () => {
+    if (!user) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('is_admin')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (error) {
+        console.error('Error checking admin status:', error);
+        return;
+      }
+      
+      setIsAdmin(data?.is_admin || false);
+    } catch (error) {
+      console.error('Error checking admin status:', error);
+    }
+  };
+
+  // Admin force stop function
+  const handleAdminForceStop = async () => {
+    if (!isAdmin || !currentOperationId) return;
+    
+    try {
+      await supabase
+        .from('sync_control')
+        .upsert({
+          operation_type: 'bulk_sync',
+          operation_id: currentOperationId,
+          should_cancel: true,
+          created_by: user?.id
+        });
+      
+      toast({
+        title: "Force Stop Initiated",
+        description: "Server-side cancellation signal sent",
+      });
+    } catch (error) {
+      console.error('Error setting force stop:', error);
+      toast({
+        title: "Error",
+        description: "Failed to send force stop signal",
+        variant: "destructive",
+      });
+    }
+  };
 
   // Fetch games from database
   const fetchGames = async () => {
@@ -144,6 +199,7 @@ export const DataImportPanel = () => {
   // Fetch games on component mount and set up realtime subscriptions
   useEffect(() => {
     fetchGames();
+    checkAdminStatus();
     
     // Subscribe to realtime updates for sets and games
     const setsChannel = supabase
@@ -306,6 +362,9 @@ export const DataImportPanel = () => {
     if (!gameSelectedSets || gameSelectedSets.size === 0) return;
 
     const setIds = Array.from(gameSelectedSets);
+    const operationId = `bulk_sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    setCurrentOperationId(operationId);
+    
     setIsImporting(true);
     setBulkCancelRequested(false);
     setBulkProgress({ current: 0, total: setIds.length, successful: 0, failed: 0 });
@@ -332,7 +391,7 @@ export const DataImportPanel = () => {
           
           try {
             const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-              body: { action: 'sync-cards', setId }
+              body: { action: 'sync-cards', setId, operationId }
             });
             if (error) throw error;
             return { success: true, setId, data };
@@ -384,6 +443,7 @@ export const DataImportPanel = () => {
       setIsImporting(false);
       setBulkProgress(null);
       setBulkCancelRequested(false);
+      setCurrentOperationId(null);
     }
   };
 
@@ -711,15 +771,28 @@ export const DataImportPanel = () => {
                                         Sync Selected Sets ({getSelectedCount(game.id)})
                                       </Button>
                                       {isImporting && bulkProgress && (
-                                        <Button
-                                          onClick={handleCancelBulkSync}
-                                          size="sm"
-                                          variant="destructive"
-                                          className="bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground"
-                                        >
-                                          <X className="h-4 w-4 mr-2" />
-                                          Force Stop
-                                        </Button>
+                                        <div className="flex gap-2">
+                                          <Button
+                                            onClick={handleCancelBulkSync}
+                                            size="sm"
+                                            variant="outline"
+                                            className="border-muted-foreground/20 text-muted-foreground hover:bg-muted"
+                                          >
+                                            <X className="h-4 w-4 mr-2" />
+                                            Cancel
+                                          </Button>
+                                          {isAdmin && (
+                                            <Button
+                                              onClick={handleAdminForceStop}
+                                              size="sm"
+                                              variant="destructive"
+                                              className="bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                                            >
+                                              <Shield className="h-4 w-4 mr-2" />
+                                              Admin Force Stop
+                                            </Button>
+                                          )}
+                                        </div>
                                       )}
                                     </div>
                                   )}
