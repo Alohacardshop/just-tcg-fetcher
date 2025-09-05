@@ -740,11 +740,17 @@ export const DataImportPanel = () => {
                                 getFilteredSets(game.id).map((set) => {
                                   const isSelected = selectedSets.get(game.id)?.has(set.jt_set_id) || false;
                                   const getStatusBadge = () => {
+                                    const isSynced = set.cards_synced_count > 0 && 
+                                      set.total_cards > 0 && 
+                                      set.cards_synced_count >= set.total_cards;
+                                    
                                     switch (set.sync_status) {
                                       case 'syncing':
                                         return <Badge variant="secondary" className="text-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Syncing</Badge>;
                                       case 'success':
-                                        return <Badge variant="default" className="text-green-600"><CheckCircle className="h-3 w-3 mr-1" />Synced</Badge>;
+                                        return isSynced 
+                                          ? <Badge variant="default" className="text-green-600"><CheckCircle className="h-3 w-3 mr-1" />Synced</Badge>
+                                          : <Badge variant="secondary" className="text-yellow-600">Partial</Badge>;
                                       case 'error':
                                         return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" />Error</Badge>;
                                       default:

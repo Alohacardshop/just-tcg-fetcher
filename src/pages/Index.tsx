@@ -4,6 +4,7 @@ import { SearchFilters } from '@/components/SearchFilters';
 import { DataImportPanel } from '@/components/DataImportPanel';
 import { GameCard } from '@/components/GameCard';
 import { SetCard } from '@/components/SetCard';
+import { CardGrid } from '@/components/CardGrid';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import { ArrowLeft, TrendingUp, Package, Users, DollarSign, Database, Search, Do
 import { useAuth } from '@/hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
   const [currentView, setCurrentView] = useState<'dashboard' | 'games' | 'sets' | 'cards'>('dashboard');
@@ -19,9 +21,13 @@ const Index = () => {
   const [selectedSet, setSelectedSet] = useState<any>(null);
   const [games, setGames] = useState<any[]>([]);
   const [sets, setSets] = useState<any[]>([]);
+  const [cards, setCards] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const { user, loading: authLoading } = useAuth();
+  const { toast } = useToast();
 
   useEffect(() => {
     if (user) {
@@ -84,8 +90,49 @@ const Index = () => {
     setCurrentView('cards');
   };
 
-  const handleSearch = (filters: any) => {
+  const handleSearch = async (filters: any) => {
     console.log('Search filters:', filters);
+    
+    setSearchLoading(true);
+    try {
+      let query = supabase
+        .from('cards')
+        .select('*, sets(name, game_id), games(name)')
+        .order('name');
+
+      // Apply filters
+      if (filters.query) {
+        query = query.ilike('name', `%${filters.query}%`);
+      }
+
+      if (filters.game && filters.game !== 'all') {
+        query = query.eq('games.jt_game_id', filters.game);
+      }
+
+      // Execute query
+      const { data, error } = await query.limit(50);
+
+      if (error) {
+        console.error('Search error:', error);
+        toast({
+          title: "Search Error",
+          description: "Failed to search cards. Please try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setSearchResults(data || []);
+    } catch (error) {
+      console.error('Search error:', error);
+      toast({
+        title: "Search Error", 
+        description: "An unexpected error occurred while searching.",
+        variant: "destructive",
+      });
+    } finally {
+      setSearchLoading(false);
+    }
   };
 
   const handleBackToDashboard = () => {
@@ -218,12 +265,16 @@ const Index = () => {
 
             <TabsContent value="search" className="space-y-6">
               <SearchFilters onSearch={handleSearch} games={games} />
-              <Card className="bg-gradient-card border-border shadow-card">
-                <div className="p-8 text-center text-muted-foreground">
-                  <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Enter search criteria above to find cards</p>
-                </div>
-              </Card>
+              {searchResults.length > 0 || searchLoading ? (
+                <CardGrid cards={searchResults} loading={searchLoading} />
+              ) : (
+                <Card className="bg-gradient-card border-border shadow-card">
+                  <div className="p-8 text-center text-muted-foreground">
+                    <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                    <p>Enter search criteria above to find cards</p>
+                  </div>
+                </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="import" className="space-y-6">
@@ -274,16 +325,28 @@ const Index = () => {
           </div>
         )}
 
-        {currentView === 'cards' && (
+        {currentView === 'cards' && selectedSet && (
           <div className="space-y-6">
-            <SearchFilters onSearch={handleSearch} games={games} />
-            <Card className="bg-gradient-card border-border shadow-card">
-              <div className="p-8 text-center text-muted-foreground">
-                <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>Card data will be displayed here once synced from JustTCG</p>
-                <p className="text-sm mt-2">Use the Import Data tab to sync cards for this set</p>
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold">
+                {selectedSet.name} Cards
+              </h2>
+              <div className="text-sm text-muted-foreground">
+                {selectedSet.cards_synced_count || 0} cards synced
               </div>
-            </Card>
+            </div>
+            <SearchFilters onSearch={handleSearch} games={games} />
+            {selectedSet.cards_synced_count > 0 ? (
+              <CardGrid cards={searchResults} loading={searchLoading} />
+            ) : (
+              <Card className="bg-gradient-card border-border shadow-card">
+                <div className="p-8 text-center text-muted-foreground">
+                  <Database className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>Card data will be displayed here once synced from JustTCG</p>
+                  <p className="text-sm mt-2">Use the Import Data tab to sync cards for this set</p>
+                </div>
+              </Card>
+            )}
           </div>
         )}
       </main>
