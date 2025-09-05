@@ -30,82 +30,7 @@ function createTimer() {
   };
 }
 
-import { buildUrl, authHeaders } from '../shared/justtcg-client.ts';
-
-async function fetchJsonWithRetry(
-  url: string, 
-  options: { tries?: number; baseDelayMs?: number; timeoutMs?: number } = {}
-): Promise<any> {
-  const { tries = 3, baseDelayMs = 500, timeoutMs = 30000 } = options;
-  
-  let lastError: Error | null = null;
-  
-  for (let attempt = 1; attempt <= tries; attempt++) {
-    const startTime = Date.now();
-    let timedOut = false;
-    
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, timeoutMs);
-      
-      console.log(`🔄 Attempt ${attempt}/${tries} for ${url}`);
-      
-      const response = await fetch(url, {
-        headers: authHeaders(),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      const duration = Date.now() - startTime;
-      
-      if (response.ok) {
-        console.log(`✅ Success on attempt ${attempt} (${duration}ms): ${url}`);
-        return await response.json();
-      }
-      
-      if (response.status === 429 || response.status >= 500) {
-        const errorText = await response.text();
-        lastError = new Error(`HTTP ${response.status}: ${errorText}`);
-        
-        console.warn(`⚠️ Retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
-        
-        if (attempt < tries) {
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-          console.log(`⏰ Waiting ${delayMs}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          continue;
-        }
-      } else {
-        const errorText = await response.text();
-        console.error(`❌ Non-retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
-        throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
-      }
-      
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      
-      if (error.name === 'AbortError' || timedOut) {
-        lastError = new Error(`Request timed out after ${timeoutMs}ms`);
-        console.error(`⏰ Timeout on attempt ${attempt} (${duration}ms): ${url}`);
-      } else {
-        lastError = error as Error;
-        console.error(`❌ Network error on attempt ${attempt} (${duration}ms):`, error.message);
-      }
-      
-      if (attempt < tries) {
-        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-        console.log(`⏰ Waiting ${delayMs}ms before retry...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
-    }
-  }
-  
-  console.error(`💥 All ${tries} attempts failed for ${url}`);
-  throw lastError || new Error('All retry attempts failed');
-}
+import { buildUrl, authHeaders, fetchJsonWithRetry } from '../shared/justtcg-client.ts';
 
 function extractDataFromEnvelope(response: any): { data: any[], hasMore?: boolean } {
   if (Array.isArray(response)) {
@@ -313,6 +238,7 @@ serve(async (req) => {
       
       const pricingData = await fetchJsonWithRetry(
         pricingUrl,
+        {},
         { tries: 3, baseDelayMs: 500, timeoutMs: 30000 }
       );
 

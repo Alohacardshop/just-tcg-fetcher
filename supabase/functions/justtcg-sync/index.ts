@@ -5,7 +5,8 @@ import {
   fetchPaginatedData, 
   extractDataFromEnvelope,
   normalizeGameSlug,
-  probeEnglishOnlySet
+  probeEnglishOnlySet,
+  fetchJsonWithRetry
 } from './api-helpers.ts';
 import { buildUrl, authHeaders } from '../shared/justtcg-client.ts';
 import { logOperationStart, logOperationSuccess, logOperationError, logEarlyReturn, createTimer } from './telemetry.ts';
@@ -142,8 +143,7 @@ async function syncGames(supabaseClient: any) {
   console.log('Syncing games from JustTCG...');
   
   const url = buildUrl('games');
-  const response = await fetchFromJustTCG(url);
-  const data = await response.json();
+  const data = await fetchJsonWithRetry(url);
   
   // Debug logging for response structure
   console.log('Response keys:', Object.keys(data));

@@ -8,10 +8,10 @@ import {
   logPaginationProgress,
   createTimer 
 } from './telemetry.ts';
-import { buildUrl, authHeaders, normalizeGameSlug } from '../shared/justtcg-client.ts';
+import { buildUrl, authHeaders, normalizeGameSlug, fetchJsonWithRetry } from '../shared/justtcg-client.ts';
 
 // Re-export for backwards compatibility
-export { normalizeGameSlug };
+export { normalizeGameSlug, fetchJsonWithRetry };
 
 /**
  * JustTCG API Helper Functions
@@ -23,21 +23,20 @@ export { normalizeGameSlug };
  * @deprecated Use fetchJsonWithRetry instead for better error handling
  */
 export async function fetchFromJustTCG(url: string): Promise<Response> {
-  const headers = authHeaders();
-  
   console.log(`Making JustTCG API call to: ${url}`);
   
-  const response = await fetch(url, { headers });
-  
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`JustTCG API error: ${response.status} - ${errorText}`);
-    throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
+  try {
+    const data = await fetchJsonWithRetry(url);
+    // Convert back to Response-like object for backwards compatibility
+    return {
+      ok: true,
+      json: () => Promise.resolve(data)
+    } as Response;
+  } catch (error) {
+    console.error(`JustTCG API error: ${error.status} - ${error.message}`);
+    throw new Error(`JustTCG API error: ${error.status} - ${error.message}`);
   }
-  
-  return response;
 }
-
 /**
  * Probes for English-only sets when Pokemon Japan returns empty results
  * Checks if the same set exists under the regular 'pokemon' game
@@ -58,6 +57,7 @@ export async function probeEnglishOnlySet(
     
     const response = await fetchJsonWithRetry(
       probeUrl,
+      {},
       { tries: 3, baseDelayMs: 300, timeoutMs: 30000 } // Faster probe
     );
     
@@ -77,6 +77,7 @@ export async function probeEnglishOnlySet(
       
       const countResponse = await fetchJsonWithRetry(
         countUrl,
+        {},
         { tries: 2, baseDelayMs: 300, timeoutMs: 30000 }
       );
       
@@ -94,163 +95,11 @@ export async function probeEnglishOnlySet(
     return { hasEnglishCards: false, cardCount: 0 };
   }
 }
-
-interface RetryOptions {
-  tries?: number;
-  baseDelayMs?: number;
-  timeoutMs?: number;
-}
-
-/**
- * Unified fetch helper with timeout and exponential backoff
- * Handles retries on 429/5xx errors with proper logging
- */
-export async function fetchJsonWithRetry(
-  url: string, 
-  options: RetryOptions = {}
-): Promise<any> {
-  const { tries = 6, baseDelayMs = 500, timeoutMs = 90000 } = options;
-  const operation = 'fetchJsonWithRetry';
-  const timer = createTimer();
-  
-  timer.start();
-  logOperationStart(operation, { url, tries, timeoutMs });
-  
-  let lastError: Error | null = null;
-  
-  for (let attempt = 1; attempt <= tries; attempt++) {
-    const attemptTimer = createTimer();
-    attemptTimer.start();
-    let timedOut = false;
-    
-    try {
-      // Create AbortController for timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-        logTimeout(operation, timeoutMs, { url, attempt, retryCount: attempt });
-      }, timeoutMs);
-      
-      if (attempt > 1) {
-        logRetryAttempt(operation, attempt, tries, { url });
-      }
-      
-      console.log(`🔄 Attempt ${attempt}/${tries} for ${url}`);
-      
-      const response = await fetch(url, {
-        headers: authHeaders(),
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-      const attemptDuration = attemptTimer.end();
-      
-      if (response.ok) {
-        const totalDuration = timer.end();
-        logOperationSuccess(operation, { 
-          url, 
-          attempt, 
-          duration: totalDuration,
-          attemptDuration,
-          retryCount: attempt - 1 
-        });
-        console.log(`✅ Success on attempt ${attempt} (${attemptDuration}ms): ${url}`);
-        return await response.json();
-      }
-      
-      // Handle retryable errors
-      if (response.status === 429 || response.status >= 500) {
-        const errorText = await response.text();
-        const attemptDuration = attemptTimer.end();
-        lastError = new Error(`HTTP ${response.status}: ${errorText}`);
-        
-        logStructured('warn', `Retryable error on attempt ${attempt}`, {
-          operation,
-          url,
-          attempt,
-          retryCount: attempt,
-          duration: attemptDuration,
-          statusCode: response.status,
-          error: errorText
-        });
-        
-        console.warn(`⚠️ Retryable error on attempt ${attempt} (${attemptDuration}ms): ${response.status} - ${errorText}`);
-        
-        if (attempt < tries) {
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-          console.log(`⏰ Waiting ${delayMs}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          continue;
-        }
-      } else {
-        // Non-retryable error
-        const errorText = await response.text();
-        const attemptDuration = attemptTimer.end();
-        const totalDuration = timer.end();
-        
-        logOperationError(operation, `Non-retryable HTTP ${response.status}: ${errorText}`, {
-          url,
-          attempt,
-          duration: totalDuration,
-          attemptDuration,
-          statusCode: response.status,
-          retryCount: attempt - 1
-        });
-        
-        console.error(`❌ Non-retryable error on attempt ${attempt} (${attemptDuration}ms): ${response.status} - ${errorText}`);
-        throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
-      }
-      
-    } catch (error) {
-      const attemptDuration = attemptTimer.end();
-      
-      if (error.name === 'AbortError' || timedOut) {
-        lastError = new Error(`Request timed out after ${timeoutMs}ms`);
-        logTimeout(operation, timeoutMs, {
-          url,
-          attempt,
-          duration: attemptDuration,
-          retryCount: attempt
-        });
-        console.error(`⏰ Timeout on attempt ${attempt} (${attemptDuration}ms): ${url}`);
-      } else {
-        lastError = error as Error;
-        logStructured('warn', `Network error on attempt ${attempt}`, {
-          operation,
-          url,
-          attempt,
-          duration: attemptDuration,
-          retryCount: attempt,
-          error: error.message
-        });
-        console.error(`❌ Network error on attempt ${attempt} (${attemptDuration}ms):`, error.message);
-      }
-      
-      if (attempt < tries) {
-        const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-        console.log(`⏰ Waiting ${delayMs}ms before retry...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      }
-    }
-  }
-  
-  const totalDuration = timer.end();
-  logOperationError(operation, `All ${tries} attempts failed`, {
-    url,
-    duration: totalDuration,
-    retryCount: tries,
-    finalError: lastError?.message
-  });
-  console.error(`💥 All ${tries} attempts failed for ${url}`);
-  throw lastError || new Error('All retry attempts failed');
-}
-
 interface PaginationOptions {
   limit?: number;
   maxPages?: number;
   timeoutMs?: number;
-  retryOptions?: RetryOptions;
+  retryOptions?: { tries?: number; baseDelayMs?: number; timeoutMs?: number };
 }
 
 interface PaginatedResponse<T> {
@@ -373,6 +222,7 @@ export async function fetchPaginatedData<T = any>(
     try {
       const response = await fetchJsonWithRetry(
         url.toString(),
+        {},
         { timeoutMs, ...retryOptions }
       );
       
