@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { updateApiInspectorData } from '@/components/ApiInspector';
 
 interface UsePricingOptions {
   cardId?: string;
@@ -47,12 +48,6 @@ export function usePricing({
       const message = 'JustTCG card ID is required before fetching pricing';
       setError(message);
       
-      toast({
-        title: "Pricing Unavailable",
-        description: "Card must be synced with JustTCG before pricing can be fetched.",
-        variant: "destructive",
-      });
-      
       console.warn('⚠️ Pricing fetch blocked: missing JustTCG card ID');
       return;
     }
@@ -67,6 +62,13 @@ export function usePricing({
     try {
       const { data, error: functionError } = await supabase.functions.invoke('proxy-pricing', {
         body: requestPayload
+      });
+
+      // Update API Inspector with response metadata
+      updateApiInspectorData({
+        endpoint: 'proxy-pricing',
+        meta: data?.meta,
+        _metadata: data?._metadata,
       });
 
       // Handle function-level errors (network, auth, etc.)
