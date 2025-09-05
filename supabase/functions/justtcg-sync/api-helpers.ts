@@ -114,7 +114,164 @@ export async function fetchJsonWithRetry(
         const errorText = await response.text();
         console.error(`❌ Non-retryable error on attempt ${attempt} (${duration}ms): ${response.status} - ${errorText}`);
         throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
+}
+
+interface PaginationOptions {
+  limit?: number;
+  maxPages?: number;
+  timeoutMs?: number;
+  retryOptions?: RetryOptions;
+}
+
+interface PaginatedResponse<T> {
+  data: T[];
+  totalFetched: number;
+  pagesFetched: number;
+  stoppedReason: 'hasMore_false' | 'max_pages' | 'empty_page' | 'completed';
+}
+
+/**
+ * Robust data extraction from various API response envelopes
+ */
+export function extractDataFromEnvelope(response: any): { data: any[], hasMore?: boolean } {
+  // Direct array response
+  if (Array.isArray(response)) {
+    return { data: response };
+  }
+  
+  // Try common envelope patterns
+  const patterns = [
+    'data',
+    'results', 
+    'items',
+    'sets',
+    'cards',
+    'games'
+  ];
+  
+  for (const pattern of patterns) {
+    if (response[pattern] && Array.isArray(response[pattern])) {
+      const hasMore = response.meta?.hasMore ?? 
+                     response._metadata?.hasMore ?? 
+                     response.pagination?.hasMore ??
+                     undefined;
+      
+      return { 
+        data: response[pattern], 
+        hasMore 
+      };
+    }
+  }
+  
+  // Nested data patterns
+  if (response.data) {
+    for (const pattern of patterns) {
+      if (response.data[pattern] && Array.isArray(response.data[pattern])) {
+        const hasMore = response.data.meta?.hasMore ?? 
+                       response.data._metadata?.hasMore ?? 
+                       response.data.pagination?.hasMore ??
+                       response.meta?.hasMore ?? 
+                       response._metadata?.hasMore ?? 
+                       response.pagination?.hasMore ??
+                       undefined;
+        
+        return { 
+          data: response.data[pattern], 
+          hasMore 
+        };
       }
+    }
+  }
+  
+  console.warn('Could not extract data from response envelope:', Object.keys(response));
+  return { data: [] };
+}
+
+/**
+ * Paginated fetch with limit+offset for JustTCG API endpoints
+ * Handles various response envelope formats and stops appropriately
+ */
+export async function fetchPaginatedData<T = any>(
+  baseUrl: string,
+  headers: HeadersInit,
+  options: PaginationOptions = {}
+): Promise<PaginatedResponse<T>> {
+  const { 
+    limit = 200, 
+    maxPages = 100, 
+    timeoutMs = 90000,
+    retryOptions = {}
+  } = options;
+  
+  let allData: T[] = [];
+  let offset = 0;
+  let pagesFetched = 0;
+  let stoppedReason: PaginatedResponse<T>['stoppedReason'] = 'completed';
+  
+  console.log(`🔄 Starting paginated fetch: ${baseUrl} (limit=${limit}, maxPages=${maxPages})`);
+  
+  while (pagesFetched < maxPages) {
+    const url = new URL(baseUrl);
+    url.searchParams.set('limit', limit.toString());
+    url.searchParams.set('offset', offset.toString());
+    
+    console.log(`📄 Fetching page ${pagesFetched + 1}/${maxPages} (offset=${offset}, limit=${limit})`);
+    
+    try {
+      const response = await fetchJsonWithRetry(
+        url.toString(),
+        { headers },
+        { timeoutMs, ...retryOptions }
+      );
+      
+      const { data: pageData, hasMore } = extractDataFromEnvelope(response);
+      
+      if (pageData.length === 0) {
+        console.log(`📭 Empty page received, stopping pagination`);
+        stoppedReason = 'empty_page';
+        break;
+      }
+      
+      allData = allData.concat(pageData);
+      pagesFetched++;
+      offset += pageData.length; // Use actual returned count for offset
+      
+      console.log(`📊 Page ${pagesFetched}: ${pageData.length} items (total: ${allData.length})`);
+      
+      // Check hasMore flag if available
+      if (hasMore === false) {
+        console.log(`🏁 API signaled no more data (hasMore=false), stopping`);
+        stoppedReason = 'hasMore_false';
+        break;
+      }
+      
+      // If we got less than requested limit, likely at the end
+      if (pageData.length < limit) {
+        console.log(`🏁 Received ${pageData.length} < ${limit} requested, likely at end`);
+        stoppedReason = 'completed';
+        break;
+      }
+      
+    } catch (error) {
+      console.error(`❌ Pagination failed on page ${pagesFetched + 1}:`, error.message);
+      throw error;
+    }
+  }
+  
+  if (pagesFetched >= maxPages) {
+    console.warn(`⚠️ Hit maximum page limit (${maxPages}), stopping pagination`);
+    stoppedReason = 'max_pages';
+  }
+  
+  console.log(`✅ Pagination complete: ${allData.length} total items, ${pagesFetched} pages, stopped: ${stoppedReason}`);
+  
+  return {
+    data: allData,
+    totalFetched: allData.length,
+    pagesFetched,
+    stoppedReason
+  };
+}
       
     } catch (error) {
       const duration = Date.now() - startTime;

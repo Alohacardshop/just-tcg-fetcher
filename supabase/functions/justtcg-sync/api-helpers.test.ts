@@ -203,6 +203,101 @@ const tests = [
         globalThis.fetch = originalFetch;
       }
     }
+  },
+  
+  {
+    name: 'fetchPaginatedData handles single page',
+    test: async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async (url) => {
+        // Check for limit/offset params
+        const urlObj = new URL(url);
+        const limit = urlObj.searchParams.get('limit');
+        const offset = urlObj.searchParams.get('offset');
+        
+        if (limit !== '100' || offset !== '0') {
+          throw new Error(`Expected limit=100&offset=0, got limit=${limit}&offset=${offset}`);
+        }
+        
+        return new Response(JSON.stringify({ 
+          data: [{ id: 1 }, { id: 2 }],
+          meta: { hasMore: false }
+        }), { status: 200 });
+      };
+      
+      try {
+        const { fetchPaginatedData } = await import('./api-helpers.ts');
+        const result = await fetchPaginatedData(
+          'https://test.com', 
+          { 'X-API-Key': 'test' },
+          { limit: 100, maxPages: 5 }
+        );
+        
+        if (result.totalFetched !== 2) {
+          throw new Error(`Expected 2 items, got ${result.totalFetched}`);
+        }
+        
+        if (result.stoppedReason !== 'hasMore_false') {
+          throw new Error(`Expected hasMore_false, got ${result.stoppedReason}`);
+        }
+        
+        console.log('✅ fetchPaginatedData single page test passed');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  },
+  
+  {
+    name: 'fetchPaginatedData handles multiple pages and envelope extraction',
+    test: async () => {
+      let requestCount = 0;
+      const originalFetch = globalThis.fetch;
+      
+      globalThis.fetch = async (url) => {
+        requestCount++;
+        const urlObj = new URL(url);
+        const offset = parseInt(urlObj.searchParams.get('offset') || '0');
+        
+        // Return different envelope formats to test extraction
+        if (requestCount === 1) {
+          return new Response(JSON.stringify({ 
+            results: [{ id: 1 }, { id: 2 }] // Using 'results' envelope
+          }), { status: 200 });
+        } else if (requestCount === 2) {
+          return new Response(JSON.stringify({ 
+            data: { cards: [{ id: 3 }] } // Using nested 'cards' envelope
+          }), { status: 200 });
+        } else {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 }); // Empty page
+        }
+      };
+      
+      try {
+        const { fetchPaginatedData } = await import('./api-helpers.ts');
+        const result = await fetchPaginatedData(
+          'https://test.com', 
+          { 'X-API-Key': 'test' },
+          { limit: 2, maxPages: 5 }
+        );
+        
+        if (result.totalFetched !== 3) {
+          throw new Error(`Expected 3 items, got ${result.totalFetched}`);
+        }
+        
+        if (result.pagesFetched !== 2) {
+          throw new Error(`Expected 2 pages, got ${result.pagesFetched}`);
+        }
+        
+        if (result.stoppedReason !== 'empty_page') {
+          throw new Error(`Expected empty_page, got ${result.stoppedReason}`);
+        }
+        
+        console.log('✅ fetchPaginatedData multiple pages test passed');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
   }
 ];
 

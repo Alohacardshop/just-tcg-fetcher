@@ -33,13 +33,28 @@ All JustTCG API calls use the unified `fetchJsonWithRetry` helper that provides:
 - **Comprehensive logging**: Attempt number, duration, timeout status
 - **Error classification**: Retryable vs non-retryable error handling
 
+## Pagination
+
+List endpoints (/sets, /cards) use robust pagination with:
+
+- **Limit + offset paging**: Proper offset-based pagination instead of page numbers
+- **Safe termination**: Stops when `meta.hasMore === false` or page count hits 100
+- **Envelope parsing**: Handles various response formats (data, results, items, etc.)
+- **Progress tracking**: Logs pagination progress and stopping reasons
+
 ```typescript
-const data = await fetchJsonWithRetry(
-  'https://api.justtcg.com/v1/games',
-  { headers: createJustTCGHeaders(apiKey) },
-  { tries: 6, baseDelayMs: 500, timeoutMs: 90000 }
+const { data, totalFetched, pagesFetched, stoppedReason } = await fetchPaginatedData(
+  'https://api.justtcg.com/v1/cards?game=pokemon&set=base',
+  createJustTCGHeaders(apiKey),
+  { limit: 200, maxPages: 100, timeoutMs: 90000 }
 );
 ```
+
+### Stopping Conditions
+- `hasMore_false`: API signaled no more data
+- `max_pages`: Hit the 100-page safety limit  
+- `empty_page`: Received empty response
+- `completed`: Received fewer items than requested limit
 
 ## Functions
 

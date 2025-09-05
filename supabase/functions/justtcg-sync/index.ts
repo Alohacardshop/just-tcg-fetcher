@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry } from './api-helpers.ts';
+import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry, fetchPaginatedData, extractDataFromEnvelope } from './api-helpers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -139,21 +139,10 @@ async function syncGames(supabaseClient: any, apiKey: string) {
   console.log('Response keys:', Object.keys(data));
   console.log('Full response sample:', JSON.stringify(data).substring(0, 500) + '...');
   
-  // Robust parsing - try different response shapes
-  let games: any[] = [];
-  if (Array.isArray(data)) {
-    games = data;
-    console.log('Response is direct array with', games.length, 'items');
-  } else if (data.games && Array.isArray(data.games)) {
-    games = data.games;
-    console.log('Found games array with', games.length, 'items');
-  } else if (data.data && Array.isArray(data.data)) {
-    games = data.data;
-    console.log('Found data array with', games.length, 'items');
-  } else if (data.data && data.data.games && Array.isArray(data.data.games)) {
-    games = data.data.games;
-    console.log('Found nested data.games array with', games.length, 'items');
-  } else {
+  // Use unified envelope extraction
+  const { data: games } = extractDataFromEnvelope(data);
+  
+  if (games.length === 0) {
     console.error('Could not find games array in response structure');
     return { synced: 0, error: 'No games array found in response' };
   }
@@ -201,30 +190,13 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
     throw new Error(`Game not found: ${gameId}`);
   }
 
-  const data = await fetchJsonWithRetry(
+  const { data: sets, totalFetched, pagesFetched, stoppedReason } = await fetchPaginatedData(
     `https://api.justtcg.com/v1/sets?game=${encodeURIComponent(gameId)}`,
-    { headers: createJustTCGHeaders(apiKey) },
-    { tries: 6, baseDelayMs: 500, timeoutMs: 90000 }
+    createJustTCGHeaders(apiKey),
+    { limit: 200, maxPages: 100, timeoutMs: 90000 }
   );
-  // Debug response structure
-  console.log('Sets response keys:', Object.keys(data));
-  console.log('Sets response sample:', JSON.stringify(data).substring(0, 400) + '...');
 
-  // Robust parsing for sets
-  let sets: any[] = [];
-  if (Array.isArray(data)) {
-    sets = data;
-  } else if (Array.isArray((data as any).sets)) {
-    sets = (data as any).sets;
-  } else if (Array.isArray((data as any).data)) {
-    sets = (data as any).data;
-  } else if ((data as any).data && Array.isArray((data as any).data.sets)) {
-    sets = (data as any).data.sets;
-  } else {
-    console.error('Could not find sets array in response structure');
-    return { synced: 0, sets: [] };
-  }
-
+  console.log(`📊 Sets pagination complete: ${totalFetched} sets, ${pagesFetched} pages, stopped: ${stoppedReason}`);
   console.log(`Found ${sets.length} sets to sync`);
 
   // Upsert sets
@@ -267,7 +239,7 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
   }
 
   console.log(`Successfully synced ${upsertedSets?.length || 0} sets`);
-  return { synced: upsertedSets?.length || 0, sets: upsertedSets, gameId, setsCount };
+  return { synced: upsertedSets?.length || 0, sets: upsertedSets, gameId, setsCount, paginationInfo: { totalFetched, pagesFetched, stoppedReason } };
 }
 
 async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
@@ -306,64 +278,14 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
   
     console.log(`Fetching cards for game: ${gameId}, set: ${setName} (expected: ${expectedTotalCards} cards)`);
 
-    // Fetch all cards (singles) with pagination
-    let allCards: Card[] = [];
-    let page = 1;
-    let hasMore = true;
-    const limit = 200; // Maximum for Pro/Enterprise plans
+    // Fetch all cards (singles) with robust pagination
+    const { data: allCards, totalFetched, pagesFetched, stoppedReason } = await fetchPaginatedData<Card>(
+      `https://api.justtcg.com/v1/cards?game=${encodeURIComponent(gameId)}&set=${encodeURIComponent(setName)}`,
+      createJustTCGHeaders(apiKey),
+      { limit: 200, maxPages: 100, timeoutMs: 90000 }
+    );
 
-    while (hasMore) {
-      const url = new URL('https://api.justtcg.com/v1/cards');
-      url.searchParams.set('game', gameId);
-      url.searchParams.set('set', setName);
-      url.searchParams.set('limit', limit.toString());
-      url.searchParams.set('page', page.toString());
-
-      console.log(`Fetching page ${page} of cards...`);
-
-      const responseData = await fetchJsonWithRetry(
-        url.toString(),
-        { headers: createJustTCGHeaders(apiKey) },
-        { tries: 6, baseDelayMs: 500, timeoutMs: 90000 }
-      );
-      
-      if (page === 1) {
-        console.log('API response keys:', Object.keys(responseData));
-        // Log metadata if available
-        if (responseData._metadata) {
-          console.log('API metadata:', responseData._metadata);
-        }
-        if (responseData.meta) {
-          console.log('API meta:', responseData.meta);
-        }
-      }
-      
-      // Parse response - JustTCG returns { data: Card[] }
-      const pageCards: Card[] = responseData.data || responseData.cards || responseData || [];
-      console.log(`Page ${page}: Found ${pageCards.length} cards`);
-      
-      if (pageCards.length === 0) {
-        hasMore = false;
-      } else {
-        allCards = allCards.concat(pageCards);
-        
-        // Check if we have more pages
-        // If we got less than the limit, we're on the last page
-        if (pageCards.length < limit) {
-          hasMore = false;
-        } else {
-          page++;
-        }
-        
-        // Safety check to prevent infinite loops
-        if (page > 20) {
-          console.warn('Reached maximum page limit (20), stopping pagination');
-          hasMore = false;
-        }
-      }
-    }
-
-    console.log(`Total cards fetched across ${page} pages: ${allCards.length}`);
+    console.log(`📊 Cards pagination complete: ${totalFetched} cards, ${pagesFetched} pages, stopped: ${stoppedReason}`);
 
     // Per docs: Sealed items are represented as variants (condition: "Sealed") on cards.
     // We intentionally skip separate sealed endpoints and rely solely on the cards endpoint.
@@ -377,10 +299,6 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     // Warn if we expected more items (optional informational log)
     if (expectedTotalCards && totalItems !== expectedTotalCards) {
       console.warn(`Item count mismatch vs set.total_cards. Expected: ${expectedTotalCards}, From cards: ${totalItems}`);
-    }
-    // Log discrepancy if expected vs actual count differs
-    if (expectedTotalCards && totalItems !== expectedTotalCards) {
-      console.warn(`Item count mismatch! Expected: ${expectedTotalCards}, Fetched: ${totalItems} (${allCards.length} singles + ${allSealed.length} sealed)`);
     }
 
   if (allCards.length === 0 && allSealed.length === 0) {
@@ -552,12 +470,14 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
       .eq('jt_set_id', setId);
 
     console.log(`Successfully synced ${upsertedCards?.length || 0} cards, ${upsertedSealed?.length || 0} sealed products, and ${totalPrices} prices`);
+    console.log(`📊 Pagination summary: ${totalFetched} items fetched, ${pagesFetched} pages, stopped: ${stoppedReason}`);
     return { 
       synced: upsertedCards?.length || 0, 
       cards: upsertedCards,
       sealedSynced: upsertedSealed?.length || 0,
       sealedProducts: upsertedSealed,
-      pricesSynced: totalPrices 
+      pricesSynced: totalPrices,
+      paginationInfo: { totalFetched, pagesFetched, stoppedReason }
     };
   } catch (error) {
     // Update set with error status
