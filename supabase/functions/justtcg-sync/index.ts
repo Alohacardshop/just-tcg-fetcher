@@ -257,10 +257,15 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
 async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
   console.log(`Syncing cards for set: ${setId}`);
 
-  // Get the internal set UUID and game UUID from jt_set_id
+  // Get the set and game data - we need the set name and game JustTCG ID for the API call
   const { data: setData, error: setError } = await supabaseClient
     .from('sets')
-    .select('id, game_id')
+    .select(`
+      id, 
+      game_id, 
+      name,
+      games!inner(jt_game_id)
+    `)
     .eq('jt_set_id', setId)
     .single();
 
@@ -268,7 +273,18 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     throw new Error(`Set not found: ${setId}`);
   }
 
-  const response = await fetch(`https://api.justtcg.com/v1/sets/${setId}/cards`, {
+  const gameId = setData.games.jt_game_id;
+  const setName = setData.name;
+  
+  console.log(`Fetching cards for game: ${gameId}, set: ${setName}`);
+
+  // Use the correct JustTCG API endpoint with proper query parameters
+  const url = new URL('https://api.justtcg.com/v1/cards');
+  url.searchParams.set('game', gameId);
+  url.searchParams.set('set', setName);
+  url.searchParams.set('limit', '200'); // Maximum for Pro/Enterprise plans
+
+  const response = await fetch(url.toString(), {
     headers: { 'X-API-KEY': apiKey }
   });
 
@@ -278,20 +294,27 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
   }
 
-  const data = await response.json();
-  const cards: Card[] = data.cards || [];
-
+  const responseData = await response.json();
+  console.log('API response keys:', Object.keys(responseData));
+  
+  // Parse response - JustTCG returns { data: Card[] }
+  const cards: Card[] = responseData.data || responseData.cards || responseData || [];
   console.log(`Found ${cards.length} cards to sync`);
+
+  if (cards.length === 0) {
+    console.log('No cards found for this set');
+    return { synced: 0, cards: [], pricesSynced: 0 };
+  }
 
   // Upsert cards
   const cardRecords = cards.map(card => ({
-    jt_card_id: card.card_id,
+    jt_card_id: card.id || card.card_id,
     set_id: setData.id,
     game_id: setData.game_id,
     name: card.name,
     number: card.number,
     rarity: card.rarity,
-    image_url: card.image_url,
+    image_url: card.image_url || card.imageUrl,
     data: card as any // Store full card data as JSONB
   }));
 
@@ -308,34 +331,40 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     throw new Error(`Database error: ${cardError.message}`);
   }
 
-  // Upsert card prices
+  // Upsert card prices from variants
   let totalPrices = 0;
   for (const card of cards) {
-    if (card.variants) {
+    if (card.variants && Array.isArray(card.variants)) {
+      const cardId = upsertedCards?.find(c => c.jt_card_id === (card.id || card.card_id))?.id;
+      
+      if (!cardId) {
+        console.error(`Could not find card ID for ${card.name}`);
+        continue;
+      }
+
       for (const variant of card.variants) {
-        for (const condition of variant.conditions) {
-          const priceRecord = {
-            card_id: upsertedCards?.find(c => c.jt_card_id === card.card_id)?.id,
-            variant: variant.variant,
-            condition: condition.condition,
-            currency: condition.currency,
-            market_price: condition.market_price,
-            low_price: condition.low_price,
-            high_price: condition.high_price
-          };
+        const priceRecord = {
+          card_id: cardId,
+          variant: variant.printing || variant.variant || 'Normal',
+          condition: variant.condition || 'Near Mint',
+          currency: 'USD', // JustTCG uses USD
+          market_price: variant.price || variant.market_price,
+          low_price: variant.low_price,
+          high_price: variant.high_price,
+          source: 'justtcg'
+        };
 
-          const { error: priceError } = await supabaseClient
-            .from('card_prices')
-            .upsert(priceRecord, { 
-              onConflict: 'card_id,variant,condition,source',
-              ignoreDuplicates: false 
-            });
+        const { error: priceError } = await supabaseClient
+          .from('card_prices')
+          .upsert(priceRecord, { 
+            onConflict: 'card_id,variant,condition,source',
+            ignoreDuplicates: false 
+          });
 
-          if (priceError) {
-            console.error('Error upserting price:', priceError);
-          } else {
-            totalPrices++;
-          }
+        if (priceError) {
+          console.error('Error upserting price:', priceError, priceRecord);
+        } else {
+          totalPrices++;
         }
       }
     }
