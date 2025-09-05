@@ -279,6 +279,7 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
         id, 
         game_id, 
         name,
+        total_cards,
         games!inner(jt_game_id)
       `)
       .eq('jt_set_id', setId)
@@ -290,39 +291,96 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
 
     const gameId = setData.games.jt_game_id;
     const setName = setData.name;
+    const expectedTotalCards = setData.total_cards;
   
-  console.log(`Fetching cards for game: ${gameId}, set: ${setName}`);
+    console.log(`Fetching cards for game: ${gameId}, set: ${setName} (expected: ${expectedTotalCards} cards)`);
 
-  // Use the correct JustTCG API endpoint with proper query parameters
-  const url = new URL('https://api.justtcg.com/v1/cards');
-  url.searchParams.set('game', gameId);
-  url.searchParams.set('set', setName);
-  url.searchParams.set('limit', '200'); // Maximum for Pro/Enterprise plans
+    // Fetch all cards with pagination
+    let allCards: Card[] = [];
+    let page = 1;
+    let hasMore = true;
+    const limit = 200; // Maximum for Pro/Enterprise plans
 
-  const response = await fetch(url.toString(), {
-    headers: { 'X-API-KEY': apiKey }
-  });
+    while (hasMore) {
+      const url = new URL('https://api.justtcg.com/v1/cards');
+      url.searchParams.set('game', gameId);
+      url.searchParams.set('set', setName);
+      url.searchParams.set('limit', limit.toString());
+      url.searchParams.set('page', page.toString());
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`JustTCG API error: ${response.status} - ${errorText}`);
-    throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
-  }
+      console.log(`Fetching page ${page} of cards...`);
 
-  const responseData = await response.json();
-  console.log('API response keys:', Object.keys(responseData));
-  
-  // Parse response - JustTCG returns { data: Card[] }
-  const cards: Card[] = responseData.data || responseData.cards || responseData || [];
-  console.log(`Found ${cards.length} cards to sync`);
+      const response = await fetch(url.toString(), {
+        headers: { 'X-API-KEY': apiKey }
+      });
 
-  if (cards.length === 0) {
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`JustTCG API error: ${response.status} - ${errorText}`);
+        throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
+      }
+
+      const responseData = await response.json();
+      
+      if (page === 1) {
+        console.log('API response keys:', Object.keys(responseData));
+        // Log metadata if available
+        if (responseData._metadata) {
+          console.log('API metadata:', responseData._metadata);
+        }
+        if (responseData.meta) {
+          console.log('API meta:', responseData.meta);
+        }
+      }
+      
+      // Parse response - JustTCG returns { data: Card[] }
+      const pageCards: Card[] = responseData.data || responseData.cards || responseData || [];
+      console.log(`Page ${page}: Found ${pageCards.length} cards`);
+      
+      if (pageCards.length === 0) {
+        hasMore = false;
+      } else {
+        allCards = allCards.concat(pageCards);
+        
+        // Check if we have more pages
+        // If we got less than the limit, we're on the last page
+        if (pageCards.length < limit) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+        
+        // Safety check to prevent infinite loops
+        if (page > 20) {
+          console.warn('Reached maximum page limit (20), stopping pagination');
+          hasMore = false;
+        }
+      }
+    }
+
+    console.log(`Total cards fetched across ${page} pages: ${allCards.length}`);
+    
+    // Log discrepancy if expected vs actual count differs
+    if (expectedTotalCards && allCards.length !== expectedTotalCards) {
+      console.warn(`Card count mismatch! Expected: ${expectedTotalCards}, Fetched: ${allCards.length}`);
+    }
+
+  if (allCards.length === 0) {
     console.log('No cards found for this set');
+    await supabaseClient
+      .from('sets')
+      .update({ 
+        sync_status: 'completed',
+        cards_synced_count: 0,
+        last_synced_at: new Date().toISOString(),
+        last_sync_error: null
+      })
+      .eq('jt_set_id', setId);
     return { synced: 0, cards: [], pricesSynced: 0 };
   }
 
   // Upsert cards
-  const cardRecords = cards.map(card => ({
+  const cardRecords = allCards.map(card => ({
     jt_card_id: card.id || card.card_id,
     set_id: setData.id,
     game_id: setData.game_id,
@@ -348,7 +406,7 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
 
   // Upsert card prices from variants
   let totalPrices = 0;
-  for (const card of cards) {
+  for (const card of allCards) {
     if (card.variants && Array.isArray(card.variants)) {
       const cardId = upsertedCards?.find(c => c.jt_card_id === (card.id || card.card_id))?.id;
       
@@ -394,7 +452,7 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     await supabaseClient
       .from('sets')
       .update({ 
-        sync_status: 'success',
+        sync_status: 'completed',
         cards_synced_count: cardCount || 0,
         last_synced_at: new Date().toISOString(),
         last_sync_error: null
