@@ -85,6 +85,29 @@ buildJustTCGUrl('sets', { game: 'pokemon-jp' });
 
 The `normalizeGameSlug()` function handles case-insensitive matching and ensures consistent API communication.
 
+## Pokemon Japan Empty Results Guard
+
+Special handling for Pokemon Japan sets that may actually be English-only:
+
+### How It Works
+
+1. **Detection**: When `pokemon-japan` returns zero cards on the first page
+2. **Probe**: Automatically checks the same set under regular `pokemon` game
+3. **Actionable Error**: If English cards are found, returns specific error message to UI
+4. **User Guidance**: Suggests syncing the set under regular Pokemon instead
+
+### Error Messages
+
+When an English-only set is detected, the sync will fail with a clear message:
+
+```
+Set "Base Set" appears to be English-only (found 102+ cards under 'pokemon' game). 
+This set may not have Japanese cards available. 
+Consider syncing this set under the regular Pokemon game instead of Pokemon Japan.
+```
+
+This prevents confusion and guides users to the correct game for syncing English-only sets.
+
 ## Functions
 
 - `sync-games`: Syncs all available games

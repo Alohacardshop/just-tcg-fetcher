@@ -234,6 +234,82 @@ const tests = [
       
       console.log('✅ URL builder normalization test passed');
     }
+  },
+  
+  {
+    name: 'probeEnglishOnlySet detects English cards',
+    test: async () => {
+      const originalFetch = globalThis.fetch;
+      let requestCount = 0;
+      
+      globalThis.fetch = async (url) => {
+        requestCount++;
+        const urlObj = new URL(url);
+        const game = urlObj.searchParams.get('game');
+        const set = urlObj.searchParams.get('set');
+        
+        // First call should be the probe (limit=1)
+        if (requestCount === 1 && game === 'pokemon' && set === 'test-set' && urlObj.searchParams.get('limit') === '1') {
+          return new Response(JSON.stringify({ 
+            data: [{ id: 1, name: 'Test Card' }] 
+          }), { status: 200 });
+        }
+        
+        // Second call should be the count check (limit=200)
+        if (requestCount === 2 && game === 'pokemon' && set === 'test-set' && urlObj.searchParams.get('limit') === '200') {
+          return new Response(JSON.stringify({ 
+            data: [{ id: 1 }, { id: 2 }, { id: 3 }] 
+          }), { status: 200 });
+        }
+        
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      };
+      
+      try {
+        const { probeEnglishOnlySet } = await import('./api-helpers.ts');
+        const result = await probeEnglishOnlySet('test-set', 'test-key');
+        
+        if (!result.hasEnglishCards) {
+          throw new Error('Expected to detect English cards');
+        }
+        
+        if (result.cardCount !== 3) {
+          throw new Error(`Expected 3 cards, got ${result.cardCount}`);
+        }
+        
+        console.log('✅ English-only set detection test passed');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  },
+  
+  {
+    name: 'probeEnglishOnlySet handles no English cards',
+    test: async () => {
+      const originalFetch = globalThis.fetch;
+      
+      globalThis.fetch = async () => {
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      };
+      
+      try {
+        const { probeEnglishOnlySet } = await import('./api-helpers.ts');
+        const result = await probeEnglishOnlySet('empty-set', 'test-key');
+        
+        if (result.hasEnglishCards) {
+          throw new Error('Expected no English cards detected');
+        }
+        
+        if (result.cardCount !== 0) {
+          throw new Error(`Expected 0 cards, got ${result.cardCount}`);
+        }
+        
+        console.log('✅ No English cards detection test passed');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
   }
       console.log('✅ Header validation test passed');
     }

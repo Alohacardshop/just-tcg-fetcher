@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry, fetchPaginatedData, extractDataFromEnvelope, normalizeGameSlug, buildJustTCGUrl } from './api-helpers.ts';
+import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry, fetchPaginatedData, extractDataFromEnvelope, normalizeGameSlug, buildJustTCGUrl, probeEnglishOnlySet } from './api-helpers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -292,6 +292,32 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
 
     console.log(`📊 Cards pagination complete: ${totalFetched} cards, ${pagesFetched} pages, stopped: ${stoppedReason}`);
 
+    // Pokemon Japan empty results guard: Check for English-only sets
+    if (normalizedGameId === 'pokemon-japan' && totalFetched === 0 && stoppedReason === 'empty_page') {
+      console.log(`🔍 Pokemon Japan returned zero cards for set: ${setName}, probing for English-only set...`);
+      
+      const { hasEnglishCards, cardCount } = await probeEnglishOnlySet(setName, apiKey);
+      
+      if (hasEnglishCards) {
+        const errorMessage = `Set "${setName}" appears to be English-only (found ${cardCount}+ cards under 'pokemon' game). This set may not have Japanese cards available. Consider syncing this set under the regular Pokemon game instead of Pokemon Japan.`;
+        
+        console.warn(`⚠️ English-only set detected: ${setName}`);
+        
+        // Update set with specific error status
+        await supabaseClient
+          .from('sets')
+          .update({ 
+            sync_status: 'error',
+            last_sync_error: errorMessage
+          })
+          .eq('jt_set_id', setId);
+        
+        throw new Error(errorMessage);
+      } else {
+        console.log(`❌ Set "${setName}" truly has no cards in either pokemon-japan or pokemon games`);
+      }
+    }
+
     // Per docs: Sealed items are represented as variants (condition: "Sealed") on cards.
     // We intentionally skip separate sealed endpoints and rely solely on the cards endpoint.
     let allSealed: SealedProduct[] = [];
@@ -306,20 +332,23 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
       console.warn(`Item count mismatch vs set.total_cards. Expected: ${expectedTotalCards}, From cards: ${totalItems}`);
     }
 
-  if (allCards.length === 0 && allSealed.length === 0) {
-    console.log('No cards or sealed products found for this set');
-    await supabaseClient
-      .from('sets')
-      .update({ 
-        sync_status: 'completed',
-        cards_synced_count: 0,
-        sealed_synced_count: 0,
-        last_synced_at: new Date().toISOString(),
-        last_sync_error: null
-      })
-      .eq('jt_set_id', setId);
-    return { synced: 0, cards: [], sealedSynced: 0, pricesSynced: 0 };
-  }
+    if (allCards.length === 0 && allSealed.length === 0) {
+      console.log('No cards or sealed products found for this set');
+      
+      // For pokemon-japan, this should have been caught by the guard above
+      // For other games, this is a normal empty set
+      await supabaseClient
+        .from('sets')
+        .update({ 
+          sync_status: 'completed',
+          cards_synced_count: 0,
+          sealed_synced_count: 0,
+          last_synced_at: new Date().toISOString(),
+          last_sync_error: null
+        })
+        .eq('jt_set_id', setId);
+      return { synced: 0, cards: [], sealedSynced: 0, pricesSynced: 0 };
+    }
 
   // Upsert cards
   const cardRecords = allCards.map(card => ({

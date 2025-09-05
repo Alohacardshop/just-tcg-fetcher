@@ -124,6 +124,66 @@ export function buildJustTCGUrl(
   return url.toString();
 }
 
+/**
+ * Probes for English-only sets when Pokemon Japan returns empty results
+ * Checks if the same set exists under the regular 'pokemon' game
+ */
+export async function probeEnglishOnlySet(
+  setName: string, 
+  apiKey: string
+): Promise<{ hasEnglishCards: boolean; cardCount: number }> {
+  console.log(`🔍 Probing for English-only cards in set: ${setName}`);
+  
+  try {
+    // Probe page 1 of the same set under regular 'pokemon'
+    const probeUrl = buildJustTCGUrl('cards', { 
+      game: 'pokemon', // Use regular pokemon, not pokemon-japan
+      set: setName,
+      limit: 1,
+      offset: 0
+    });
+    
+    const response = await fetchJsonWithRetry(
+      probeUrl,
+      { headers: createJustTCGHeaders(apiKey) },
+      { tries: 3, baseDelayMs: 300, timeoutMs: 30000 } // Faster probe
+    );
+    
+    const { data: probeCards } = extractDataFromEnvelope(response);
+    const hasEnglishCards = probeCards.length > 0;
+    
+    if (hasEnglishCards) {
+      console.log(`✅ Found English cards for set: ${setName} under 'pokemon' game`);
+      
+      // Get rough count by checking if there are more than 1 card
+      const countUrl = buildJustTCGUrl('cards', { 
+        game: 'pokemon',
+        set: setName,
+        limit: 200,
+        offset: 0
+      });
+      
+      const countResponse = await fetchJsonWithRetry(
+        countUrl,
+        { headers: createJustTCGHeaders(apiKey) },
+        { tries: 2, baseDelayMs: 300, timeoutMs: 30000 }
+      );
+      
+      const { data: countCards } = extractDataFromEnvelope(countResponse);
+      console.log(`📊 Estimated ${countCards.length}+ English cards found for set: ${setName}`);
+      
+      return { hasEnglishCards: true, cardCount: countCards.length };
+    } else {
+      console.log(`❌ No English cards found for set: ${setName}`);
+      return { hasEnglishCards: false, cardCount: 0 };
+    }
+    
+  } catch (error) {
+    console.warn(`⚠️ Error probing English-only set ${setName}:`, error.message);
+    return { hasEnglishCards: false, cardCount: 0 };
+  }
+}
+
 interface RetryOptions {
   tries?: number;
   baseDelayMs?: number;
