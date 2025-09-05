@@ -119,6 +119,90 @@ const tests = [
       
       console.log('✅ Header validation case test passed');
     }
+  },
+  
+  {
+    name: 'fetchJsonWithRetry handles successful responses',
+    test: async () => {
+      // Mock successful fetch
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => new Response(JSON.stringify({ success: true }), { status: 200 });
+      
+      try {
+        const { fetchJsonWithRetry } = await import('./api-helpers.ts');
+        const result = await fetchJsonWithRetry('https://test.com', { headers: { 'X-API-Key': 'test' } });
+        
+        if (!result.success) {
+          throw new Error('Expected successful response');
+        }
+        
+        console.log('✅ fetchJsonWithRetry success test passed');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  },
+  
+  {
+    name: 'fetchJsonWithRetry retries on 429 errors',
+    test: async () => {
+      let attempts = 0;
+      const originalFetch = globalThis.fetch;
+      
+      globalThis.fetch = async () => {
+        attempts++;
+        if (attempts < 3) {
+          return new Response('Rate limited', { status: 429 });
+        }
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      };
+      
+      try {
+        const { fetchJsonWithRetry } = await import('./api-helpers.ts');
+        const result = await fetchJsonWithRetry(
+          'https://test.com', 
+          { headers: { 'X-API-Key': 'test' } },
+          { tries: 3, baseDelayMs: 10 }
+        );
+        
+        if (attempts !== 3) {
+          throw new Error(`Expected 3 attempts, got ${attempts}`);
+        }
+        
+        if (!result.success) {
+          throw new Error('Expected successful result after retries');
+        }
+        
+        console.log('✅ fetchJsonWithRetry retry test passed');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
+  },
+  
+  {
+    name: 'fetchJsonWithRetry fails on non-retryable errors',
+    test: async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async () => new Response('Not found', { status: 404 });
+      
+      try {
+        const { fetchJsonWithRetry } = await import('./api-helpers.ts');
+        
+        try {
+          await fetchJsonWithRetry('https://test.com', { headers: { 'X-API-Key': 'test' } });
+          throw new Error('Expected error but none was thrown');
+        } catch (error) {
+          if (!error.message.includes('404')) {
+            throw new Error(`Expected 404 error, got: ${error.message}`);
+          }
+        }
+        
+        console.log('✅ fetchJsonWithRetry non-retryable error test passed');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
   }
 ];
 

@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { getApiKey, createJustTCGHeaders, fetchFromJustTCG } from './api-helpers.ts';
+import { getApiKey, createJustTCGHeaders, fetchJsonWithRetry } from './api-helpers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -128,9 +128,12 @@ serve(async (req) => {
 async function syncGames(supabaseClient: any, apiKey: string) {
   console.log('Syncing games from JustTCG...');
   
-  const response = await fetchFromJustTCG('https://api.justtcg.com/v1/games', apiKey);
+  const data = await fetchJsonWithRetry(
+    'https://api.justtcg.com/v1/games',
+    { headers: createJustTCGHeaders(apiKey) },
+    { tries: 6, baseDelayMs: 500, timeoutMs: 90000 }
+  );
 
-  const data = await response.json();
   
   // Debug logging for response structure
   console.log('Response keys:', Object.keys(data));
@@ -198,9 +201,11 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
     throw new Error(`Game not found: ${gameId}`);
   }
 
-  const response = await fetchFromJustTCG(`https://api.justtcg.com/v1/sets?game=${encodeURIComponent(gameId)}`, apiKey);
-
-  const data = await response.json();
+  const data = await fetchJsonWithRetry(
+    `https://api.justtcg.com/v1/sets?game=${encodeURIComponent(gameId)}`,
+    { headers: createJustTCGHeaders(apiKey) },
+    { tries: 6, baseDelayMs: 500, timeoutMs: 90000 }
+  );
   // Debug response structure
   console.log('Sets response keys:', Object.keys(data));
   console.log('Sets response sample:', JSON.stringify(data).substring(0, 400) + '...');
@@ -316,9 +321,11 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
 
       console.log(`Fetching page ${page} of cards...`);
 
-      const response = await fetchFromJustTCG(url.toString(), apiKey);
-
-      const responseData = await response.json();
+      const responseData = await fetchJsonWithRetry(
+        url.toString(),
+        { headers: createJustTCGHeaders(apiKey) },
+        { tries: 6, baseDelayMs: 500, timeoutMs: 90000 }
+      );
       
       if (page === 1) {
         console.log('API response keys:', Object.keys(responseData));
