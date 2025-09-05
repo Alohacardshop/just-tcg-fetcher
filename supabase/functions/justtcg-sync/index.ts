@@ -43,6 +43,25 @@ interface Card {
   }>;
 }
 
+interface SealedProduct {
+  product_id: string;
+  set_id: string;
+  game_id: string;
+  name: string;
+  product_type?: string;
+  image_url?: string;
+  variants?: Array<{
+    variant: string;
+    conditions: Array<{
+      condition: string;
+      currency: string;
+      market_price?: number;
+      low_price?: number;
+      high_price?: number;
+    }>;
+  }>;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -82,7 +101,7 @@ serve(async (req) => {
         break;
       case 'sync-cards-bulk':
         if (!setIds || !Array.isArray(setIds)) throw new Error('setIds array required for sync-cards-bulk');
-        const { operationId } = body;
+        const { operationId } = await req.json();
         result = await syncCardsBulk(supabaseClient, apiKey, setIds, operationId);
         break;
       default:
@@ -295,7 +314,7 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
   
     console.log(`Fetching cards for game: ${gameId}, set: ${setName} (expected: ${expectedTotalCards} cards)`);
 
-    // Fetch all cards with pagination
+    // Fetch all cards (singles) with pagination
     let allCards: Card[] = [];
     let page = 1;
     let hasMore = true;
@@ -359,24 +378,84 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     }
 
     console.log(`Total cards fetched across ${page} pages: ${allCards.length}`);
+
+    // Fetch sealed products with pagination
+    let allSealed: SealedProduct[] = [];
+    console.log(`Fetching sealed products for game: ${gameId}, set: ${setName}`);
     
-    // Log discrepancy if expected vs actual count differs
-    if (expectedTotalCards && allCards.length !== expectedTotalCards) {
-      console.warn(`Card count mismatch! Expected: ${expectedTotalCards}, Fetched: ${allCards.length}`);
+    try {
+      page = 1;
+      hasMore = true;
+
+      while (hasMore) {
+        const url = new URL('https://api.justtcg.com/v1/sealed');
+        url.searchParams.set('game', gameId);
+        url.searchParams.set('set', setName);
+        url.searchParams.set('limit', limit.toString());
+        url.searchParams.set('page', page.toString());
+
+        console.log(`Fetching page ${page} of sealed products...`);
+
+        const response = await fetch(url.toString(), {
+          headers: { 'X-API-KEY': apiKey }
+        });
+
+        if (!response.ok) {
+          console.log(`No sealed products endpoint available or error: ${response.status}`);
+          break;
+        }
+
+        const responseData = await response.json();
+        
+        // Parse response - try different shapes
+        const pageSealed: SealedProduct[] = responseData.data || responseData.sealed || responseData || [];
+        console.log(`Page ${page}: Found ${pageSealed.length} sealed products`);
+        
+        if (pageSealed.length === 0) {
+          hasMore = false;
+        } else {
+          allSealed = allSealed.concat(pageSealed);
+          
+          if (pageSealed.length < limit) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+          
+          if (page > 20) {
+            console.warn('Reached maximum page limit (20) for sealed, stopping pagination');
+            hasMore = false;
+          }
+        }
+      }
+    } catch (error) {
+      console.log('Sealed products fetch failed, continuing without sealed:', error.message);
     }
 
-  if (allCards.length === 0) {
-    console.log('No cards found for this set');
+    console.log(`Total sealed products fetched: ${allSealed.length}`);
+    
+    // Log total counts
+    const totalItems = allCards.length + allSealed.length;
+    console.log(`Total items: ${allCards.length} singles + ${allSealed.length} sealed = ${totalItems}`);
+    
+    // Log discrepancy if expected vs actual count differs
+    if (expectedTotalCards && totalItems !== expectedTotalCards) {
+      console.warn(`Item count mismatch! Expected: ${expectedTotalCards}, Fetched: ${totalItems} (${allCards.length} singles + ${allSealed.length} sealed)`);
+    }
+
+  if (allCards.length === 0 && allSealed.length === 0) {
+    console.log('No cards or sealed products found for this set');
     await supabaseClient
       .from('sets')
       .update({ 
         sync_status: 'completed',
         cards_synced_count: 0,
+        sealed_synced_count: 0,
         last_synced_at: new Date().toISOString(),
         last_sync_error: null
       })
       .eq('jt_set_id', setId);
-    return { synced: 0, cards: [], pricesSynced: 0 };
+    return { synced: 0, cards: [], sealedSynced: 0, pricesSynced: 0 };
   }
 
   // Upsert cards
@@ -404,6 +483,35 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     throw new Error(`Database error: ${cardError.message}`);
   }
 
+  // Upsert sealed products
+  let upsertedSealed: any[] = [];
+  if (allSealed.length > 0) {
+    const sealedRecords = allSealed.map(sealed => ({
+      jt_product_id: sealed.id || sealed.product_id,
+      set_id: setData.id,
+      game_id: setData.game_id,
+      name: sealed.name,
+      product_type: sealed.product_type || sealed.type,
+      image_url: sealed.image_url || sealed.imageUrl,
+      data: sealed as any // Store full product data as JSONB
+    }));
+
+    const { data: sealedData, error: sealedError } = await supabaseClient
+      .from('sealed_products')
+      .upsert(sealedRecords, { 
+        onConflict: 'jt_product_id',
+        ignoreDuplicates: false 
+      })
+      .select();
+
+    if (sealedError) {
+      console.error('Error upserting sealed products:', sealedError);
+    } else {
+      upsertedSealed = sealedData || [];
+      console.log(`Successfully synced ${upsertedSealed.length} sealed products`);
+    }
+  }
+
   // Upsert card prices from variants
   let totalPrices = 0;
   for (const card of allCards) {
@@ -424,7 +532,7 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
           market_price: variant.price || variant.market_price,
           low_price: variant.low_price,
           high_price: variant.high_price,
-          source: 'justtcg'
+          source: 'JustTCG'
         };
 
         const { error: priceError } = await supabaseClient
@@ -443,9 +551,52 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
     }
   }
 
-    // Update set with successful sync status and card count
+  // Upsert sealed prices from variants
+  for (const sealed of allSealed) {
+    if (sealed.variants && Array.isArray(sealed.variants)) {
+      const productId = upsertedSealed?.find(p => p.jt_product_id === (sealed.id || sealed.product_id))?.id;
+      
+      if (!productId) {
+        console.error(`Could not find product ID for ${sealed.name}`);
+        continue;
+      }
+
+      for (const variant of sealed.variants) {
+        const priceRecord = {
+          product_id: productId,
+          variant: variant.printing || variant.variant || 'Normal',
+          condition: variant.condition || 'Near Mint',
+          currency: 'USD',
+          market_price: variant.price || variant.market_price,
+          low_price: variant.low_price,
+          high_price: variant.high_price,
+          source: 'JustTCG'
+        };
+
+        const { error: priceError } = await supabaseClient
+          .from('sealed_prices')
+          .upsert(priceRecord, { 
+            onConflict: 'product_id,variant,condition,source',
+            ignoreDuplicates: false 
+          });
+
+        if (priceError) {
+          console.error('Error upserting sealed price:', priceError, priceRecord);
+        } else {
+          totalPrices++;
+        }
+      }
+    }
+  }
+
+    // Update set with successful sync status and counts
     const { count: cardCount } = await supabaseClient
       .from('cards')
+      .select('*', { count: 'exact', head: true })
+      .eq('set_id', setData.id);
+
+    const { count: sealedCount } = await supabaseClient
+      .from('sealed_products')
       .select('*', { count: 'exact', head: true })
       .eq('set_id', setData.id);
 
@@ -454,15 +605,18 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
       .update({ 
         sync_status: 'completed',
         cards_synced_count: cardCount || 0,
+        sealed_synced_count: sealedCount || 0,
         last_synced_at: new Date().toISOString(),
         last_sync_error: null
       })
       .eq('jt_set_id', setId);
 
-    console.log(`Successfully synced ${upsertedCards?.length || 0} cards and ${totalPrices} prices`);
+    console.log(`Successfully synced ${upsertedCards?.length || 0} cards, ${upsertedSealed?.length || 0} sealed products, and ${totalPrices} prices`);
     return { 
       synced: upsertedCards?.length || 0, 
       cards: upsertedCards,
+      sealedSynced: upsertedSealed?.length || 0,
+      sealedProducts: upsertedSealed,
       pricesSynced: totalPrices 
     };
   } catch (error) {

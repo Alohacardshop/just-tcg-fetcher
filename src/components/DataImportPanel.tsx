@@ -48,6 +48,7 @@ interface GameSet {
   game_id: string;
   sync_status: string;
   cards_synced_count: number;
+  sealed_synced_count: number;
   last_synced_at: string | null;
   last_sync_error: string | null;
 }
@@ -186,7 +187,7 @@ export const DataImportPanel = () => {
     try {
       const { data, error } = await supabase
         .from('sets')
-        .select('*')
+        .select('*, sealed_synced_count')
         .eq('game_id', gameId)
         .order('name');
       
@@ -867,9 +868,10 @@ export const DataImportPanel = () => {
                                 getFilteredSets(game.id).map((set) => {
                                   const isSelected = selectedSets.get(game.id)?.has(set.jt_set_id) || false;
                                   const getStatusBadge = () => {
-                                    const isSynced = set.cards_synced_count > 0 && 
+                                    const totalSynced = set.cards_synced_count + (set.sealed_synced_count || 0);
+                                    const isSynced = totalSynced > 0 && 
                                       set.total_cards > 0 && 
-                                      set.cards_synced_count >= set.total_cards;
+                                      totalSynced >= set.total_cards;
                                     
                                     switch (set.sync_status) {
                                       case 'syncing':
@@ -899,7 +901,9 @@ export const DataImportPanel = () => {
                                         </div>
                                         <div className="flex items-center gap-3 text-xs text-muted-foreground">
                                           {set.code && <span>Code: {set.code}</span>}
-                                          <span>Cards: {set.cards_synced_count}/{set.total_cards || 0}</span>
+                                          <span>Singles: {set.cards_synced_count}</span>
+                                          <span>Sealed: {set.sealed_synced_count || 0}</span>
+                                          <span>Total: {set.cards_synced_count + (set.sealed_synced_count || 0)}/{set.total_cards || 0}</span>
                                           {set.last_synced_at && (
                                             <span>Last synced: {new Date(set.last_synced_at).toLocaleDateString()}</span>
                                           )}

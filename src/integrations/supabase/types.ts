@@ -193,6 +193,90 @@ export type Database = {
         }
         Relationships: []
       }
+      sealed_prices: {
+        Row: {
+          condition: string | null
+          created_at: string
+          currency: string
+          fetched_at: string
+          high_price: number | null
+          id: string
+          low_price: number | null
+          market_price: number | null
+          product_id: string
+          source: string
+          updated_at: string
+          variant: string | null
+        }
+        Insert: {
+          condition?: string | null
+          created_at?: string
+          currency?: string
+          fetched_at?: string
+          high_price?: number | null
+          id?: string
+          low_price?: number | null
+          market_price?: number | null
+          product_id: string
+          source?: string
+          updated_at?: string
+          variant?: string | null
+        }
+        Update: {
+          condition?: string | null
+          created_at?: string
+          currency?: string
+          fetched_at?: string
+          high_price?: number | null
+          id?: string
+          low_price?: number | null
+          market_price?: number | null
+          product_id?: string
+          source?: string
+          updated_at?: string
+          variant?: string | null
+        }
+        Relationships: []
+      }
+      sealed_products: {
+        Row: {
+          created_at: string
+          data: Json | null
+          game_id: string
+          id: string
+          image_url: string | null
+          jt_product_id: string
+          name: string
+          product_type: string | null
+          set_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          data?: Json | null
+          game_id: string
+          id?: string
+          image_url?: string | null
+          jt_product_id: string
+          name: string
+          product_type?: string | null
+          set_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          data?: Json | null
+          game_id?: string
+          id?: string
+          image_url?: string | null
+          jt_product_id?: string
+          name?: string
+          product_type?: string | null
+          set_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       sets: {
         Row: {
           cards_synced_count: number
@@ -205,6 +289,7 @@ export type Database = {
           last_synced_at: string | null
           name: string
           release_date: string | null
+          sealed_synced_count: number
           sync_status: string
           total_cards: number | null
           updated_at: string
@@ -220,6 +305,7 @@ export type Database = {
           last_synced_at?: string | null
           name: string
           release_date?: string | null
+          sealed_synced_count?: number
           sync_status?: string
           total_cards?: number | null
           updated_at?: string
@@ -235,6 +321,7 @@ export type Database = {
           last_synced_at?: string | null
           name?: string
           release_date?: string | null
+          sealed_synced_count?: number
           sync_status?: string
           total_cards?: number | null
           updated_at?: string
