@@ -7,9 +7,10 @@ import {
   normalizeGameSlug,
   probeEnglishOnlySet,
   fetchJsonWithRetry,
-  listAllSets
+  listAllSets,
+  buildUrl,
+  authHeaders
 } from './api-helpers.ts';
-import { buildUrl, authHeaders } from '../shared/justtcg-client.ts';
 import { logOperationStart, logOperationSuccess, logOperationError, logEarlyReturn, createTimer } from './telemetry.ts';
 
 const corsHeaders = {
