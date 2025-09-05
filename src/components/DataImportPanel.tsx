@@ -19,7 +19,8 @@ import {
   ChevronRight,
   Package,
   Loader2,
-  FileText
+  FileText,
+  X
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -51,7 +52,8 @@ interface GameSet {
 export const DataImportPanel = () => {
   const [importProgress, setImportProgress] = useState(0);
   const [isImporting, setIsImporting] = useState(false);
-  const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number } | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ current: number; total: number; successful: number; failed: number } | null>(null);
+  const [bulkCancelRequested, setBulkCancelRequested] = useState(false);
   
   const [games, setGames] = useState<Game[]>([]);
   const [filteredGames, setFilteredGames] = useState<Game[]>([]);
@@ -305,26 +307,72 @@ export const DataImportPanel = () => {
 
     const setIds = Array.from(gameSelectedSets);
     setIsImporting(true);
-    setBulkProgress({ current: 0, total: setIds.length });
+    setBulkCancelRequested(false);
+    setBulkProgress({ current: 0, total: setIds.length, successful: 0, failed: 0 });
+    
+    let successful = 0;
+    let failed = 0;
+    const concurrency = 3; // Process 3 sets at a time
     
     try {
-      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-cards-bulk', setIds }
-      });
+      // Process sets in batches with concurrency limit
+      for (let i = 0; i < setIds.length; i += concurrency) {
+        if (bulkCancelRequested) {
+          toast({
+            title: "Sync Cancelled",
+            description: `Cancelled after processing ${successful + failed}/${setIds.length} sets`,
+            variant: "destructive",
+          });
+          break;
+        }
 
-      if (error) throw error;
+        const batch = setIds.slice(i, i + concurrency);
+        const promises = batch.map(async (setId) => {
+          if (bulkCancelRequested) return { success: false, setId };
+          
+          try {
+            const { data, error } = await supabase.functions.invoke('justtcg-sync', {
+              body: { action: 'sync-cards', setId }
+            });
+            if (error) throw error;
+            return { success: true, setId, data };
+          } catch (error) {
+            console.error(`Error syncing set ${setId}:`, error);
+            return { success: false, setId, error: error.message };
+          }
+        });
 
-      toast({
-        title: "Bulk Sync Complete",
-        description: `Processed ${data.processedSets}/${data.totalSets} sets, synced ${data.totalCards} cards and ${data.totalPrices} prices`,
-      });
-      
-      // Clear selections
-      setSelectedSets(prev => {
-        const newMap = new Map(prev);
-        newMap.delete(gameId);
-        return newMap;
-      });
+        const results = await Promise.all(promises);
+        
+        results.forEach(result => {
+          if (result.success) {
+            successful++;
+          } else {
+            failed++;
+          }
+        });
+
+        setBulkProgress({ 
+          current: successful + failed, 
+          total: setIds.length, 
+          successful, 
+          failed 
+        });
+      }
+
+      if (!bulkCancelRequested) {
+        toast({
+          title: "Bulk Sync Complete",
+          description: `Processed ${successful + failed}/${setIds.length} sets. ${successful} successful, ${failed} failed.`,
+        });
+        
+        // Clear selections on successful completion
+        setSelectedSets(prev => {
+          const newMap = new Map(prev);
+          newMap.delete(gameId);
+          return newMap;
+        });
+      }
     } catch (error) {
       console.error('Error bulk syncing cards:', error);
       toast({
@@ -335,7 +383,16 @@ export const DataImportPanel = () => {
     } finally {
       setIsImporting(false);
       setBulkProgress(null);
+      setBulkCancelRequested(false);
     }
+  };
+
+  const handleCancelBulkSync = () => {
+    setBulkCancelRequested(true);
+    toast({
+      title: "Cancelling Sync",
+      description: "Stopping after current operations complete...",
+    });
   };
 
   const handleGameExpand = (gameId: string) => {
@@ -643,15 +700,28 @@ export const DataImportPanel = () => {
                                   </div>
                                   
                                   {getSelectedCount(game.id) > 0 && (
-                                    <Button
-                                      onClick={() => handleBulkSyncCards(game.id)}
-                                      disabled={isImporting}
-                                      size="sm"
-                                      className="bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground"
-                                    >
-                                      <Package className="h-4 w-4 mr-2" />
-                                      Sync Selected Sets ({getSelectedCount(game.id)})
-                                    </Button>
+                                    <div className="flex gap-2">
+                                      <Button
+                                        onClick={() => handleBulkSyncCards(game.id)}
+                                        disabled={isImporting}
+                                        size="sm"
+                                        className="bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground"
+                                      >
+                                        <Package className="h-4 w-4 mr-2" />
+                                        Sync Selected Sets ({getSelectedCount(game.id)})
+                                      </Button>
+                                      {isImporting && bulkProgress && (
+                                        <Button
+                                          onClick={handleCancelBulkSync}
+                                          size="sm"
+                                          variant="destructive"
+                                          className="bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground"
+                                        >
+                                          <X className="h-4 w-4 mr-2" />
+                                          Force Stop
+                                        </Button>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -770,9 +840,20 @@ export const DataImportPanel = () => {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Bulk Sync Progress</span>
-                  <span className="text-sm text-muted-foreground">{bulkProgress.current}/{bulkProgress.total} sets</span>
+                  <span className="text-sm text-muted-foreground">
+                    {bulkProgress.current}/{bulkProgress.total} sets 
+                    {bulkProgress.successful > 0 && ` (${bulkProgress.successful} ✓`}
+                    {bulkProgress.failed > 0 && ` ${bulkProgress.failed} ✗`}
+                    {(bulkProgress.successful > 0 || bulkProgress.failed > 0) && ')'}
+                  </span>
                 </div>
                 <Progress value={(bulkProgress.current / bulkProgress.total) * 100} className="h-2" />
+                {bulkCancelRequested && (
+                  <div className="text-sm text-yellow-600 flex items-center gap-2">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Cancelling... waiting for current operations to complete
+                  </div>
+                )}
               </div>
             )}
             
