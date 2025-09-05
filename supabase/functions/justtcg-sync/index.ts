@@ -51,7 +51,7 @@ serve(async (req) => {
   try {
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
     const apiKey = Deno.env.get('JUSTTCG_API_KEY');
@@ -102,11 +102,13 @@ async function syncGames(supabaseClient: any, apiKey: string) {
   console.log('Syncing games from JustTCG...');
   
   const response = await fetch('https://api.justtcg.com/v1/games', {
-    headers: { 'Authorization': `Bearer ${apiKey}` }
+    headers: { 'X-API-KEY': apiKey }
   });
 
   if (!response.ok) {
-    throw new Error(`JustTCG API error: ${response.status}`);
+    const errorText = await response.text();
+    console.error(`JustTCG API error: ${response.status} - ${errorText}`);
+    throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
@@ -155,11 +157,13 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
   }
 
   const response = await fetch(`https://api.justtcg.com/v1/games/${gameId}/sets`, {
-    headers: { 'Authorization': `Bearer ${apiKey}` }
+    headers: { 'X-API-KEY': apiKey }
   });
 
   if (!response.ok) {
-    throw new Error(`JustTCG API error: ${response.status}`);
+    const errorText = await response.text();
+    console.error(`JustTCG API error: ${response.status} - ${errorText}`);
+    throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
@@ -209,11 +213,13 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
   }
 
   const response = await fetch(`https://api.justtcg.com/v1/sets/${setId}/cards`, {
-    headers: { 'Authorization': `Bearer ${apiKey}` }
+    headers: { 'X-API-KEY': apiKey }
   });
 
   if (!response.ok) {
-    throw new Error(`JustTCG API error: ${response.status}`);
+    const errorText = await response.text();
+    console.error(`JustTCG API error: ${response.status} - ${errorText}`);
+    throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
