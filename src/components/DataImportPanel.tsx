@@ -21,7 +21,8 @@ import {
   Loader2,
   FileText,
   X,
-  Shield
+  Shield,
+  RefreshCw
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -71,6 +72,7 @@ export const DataImportPanel = () => {
   const [setsSearchTerm, setSetsSearchTerm] = useState('');
   const [setsLoading, setSetsLoading] = useState<Set<string>>(new Set());
   const [showUnsyncedOnly, setShowUnsyncedOnly] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Card data modal state
   const [selectedCard, setSelectedCard] = useState<any>(null);
@@ -126,6 +128,30 @@ export const DataImportPanel = () => {
         description: "Failed to send force stop signal",
         variant: "destructive",
       });
+    }
+  };
+
+  // Refresh all status data
+  const handleRefreshStatuses = async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchGames();
+      if (expandedGameId) {
+        await fetchSets(expandedGameId);
+      }
+      toast({
+        title: "Status Updated",
+        description: "All sync statuses have been refreshed",
+      });
+    } catch (error) {
+      console.error('Error refreshing statuses:', error);
+      toast({
+        title: "Refresh Failed",
+        description: "Failed to refresh sync statuses",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -213,6 +239,20 @@ export const DataImportPanel = () => {
         // Handle real-time updates for sets
         if (payload.eventType === 'UPDATE' && payload.new) {
           const updatedSet = payload.new as GameSet;
+          
+          // Show toast for sync completion/error
+          if (updatedSet.sync_status === 'completed' && payload.old?.sync_status === 'syncing') {
+            toast({
+              title: "Sync Completed",
+              description: `${updatedSet.name} sync finished successfully`,
+            });
+          } else if (updatedSet.sync_status === 'error' && payload.old?.sync_status === 'syncing') {
+            toast({
+              title: "Sync Failed",
+              description: `${updatedSet.name} sync failed: ${updatedSet.last_sync_error || 'Unknown error'}`,
+              variant: "destructive",
+            });
+          }
           
           // Update sets in the current view if the game is expanded
           if (expandedGameId) {
@@ -466,7 +506,9 @@ export const DataImportPanel = () => {
     }
   };
 
-  const handleSetSelect = (gameId: string, setId: string, checked: boolean) => {
+  const handleSetSelect = (gameId: string, setId: string, checked: boolean | 'indeterminate') => {
+    if (checked === 'indeterminate') return;
+    
     setSelectedSets(prev => {
       const newMap = new Map(prev);
       const gameSelections = newMap.get(gameId) || new Set<string>();
@@ -487,7 +529,8 @@ export const DataImportPanel = () => {
     });
   };
 
-  const handleSelectAllSets = (gameId: string, checked: boolean) => {
+  const handleSelectAllSets = (gameId: string, checked: boolean | 'indeterminate') => {
+    if (checked === 'indeterminate') return;
     const gameSets = setsByGame.get(gameId) || [];
     const filteredSets = gameSets.filter(set => 
       !setsSearchTerm || 
@@ -635,7 +678,18 @@ export const DataImportPanel = () => {
               <CardTitle>Imported Games</CardTitle>
               <CardDescription>Expand games to view and sync sets</CardDescription>
             </div>
-            <Badge variant="outline">{filteredGames.length} games</Badge>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleRefreshStatuses}
+                disabled={isRefreshing}
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </Button>
+              <Badge variant="outline">{filteredGames.length} games</Badge>
+            </div>
           </div>
           
           {/* Search */}
