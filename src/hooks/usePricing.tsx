@@ -24,6 +24,7 @@ interface UsePricingReturn {
   loading: boolean;
   error: string | null;
   cached: boolean;
+  noVariants: boolean; // New: indicates 404 - no variants available
   fetchPricing: (options?: { refresh?: boolean }) => Promise<void>;
 }
 
@@ -37,6 +38,7 @@ export function usePricing({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cached, setCached] = useState(false);
+  const [noVariants, setNoVariants] = useState(false);
   const { toast } = useToast();
 
   const fetchPricing = async (options: { refresh?: boolean } = {}) => {
@@ -57,34 +59,50 @@ export function usePricing({
 
     setLoading(true);
     setError(null);
+    setNoVariants(false);
     
-    console.log(`🔄 Fetching pricing for card: ${cardId}, condition: ${condition}, printing: ${printing}`);
+    const requestPayload = { cardId, condition, printing, refresh: options.refresh || false };
+    console.log(`🔄 Fetching pricing with payload:`, requestPayload);
 
     try {
       const { data, error: functionError } = await supabase.functions.invoke('proxy-pricing', {
-        body: {
-          cardId,
-          condition,
-          printing,
-          refresh: options.refresh || false
-        }
+        body: requestPayload
       });
 
+      // Handle function-level errors (network, auth, etc.)
       if (functionError) {
-        throw new Error(functionError.message);
+        console.error('❌ Function error:', functionError);
+        throw new Error(`Service error: ${functionError.message}`);
       }
 
+      // Handle application-level responses
       if (!data?.success) {
-        throw new Error(data?.error || 'Failed to fetch pricing');
+        const errorMessage = data?.error || 'Unknown error occurred';
+        console.error('❌ Pricing error:', errorMessage);
+        
+        // Special handling for 404 - no variants available
+        if (data?.status === 404 || errorMessage.toLowerCase().includes('no pricing')) {
+          console.log(`📭 No variants available for: ${cardId} (${condition}, ${printing})`);
+          setNoVariants(true);
+          setPricing(null);
+          
+          // Don't show error toast for no variants - it's expected behavior
+          return;
+        }
+        
+        // For other errors, show concise error message
+        throw new Error(errorMessage);
       }
 
+      // Success case
       setPricing(data.pricing);
       setCached(data.cached || false);
+      setNoVariants(false);
       
       if (data.cached) {
-        console.log(`📋 Loaded cached pricing for card: ${cardId}`);
+        console.log(`📋 Loaded cached pricing for: ${cardId}`);
       } else {
-        console.log(`✅ Fetched fresh pricing for card: ${cardId}`);
+        console.log(`✅ Fetched fresh pricing for: ${cardId}`);
         toast({
           title: "Pricing Updated",
           description: `Fresh pricing data fetched for ${condition} condition.`,
@@ -94,8 +112,10 @@ export function usePricing({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
       setError(errorMessage);
+      setPricing(null);
+      setNoVariants(false);
       
-      console.error('❌ Pricing fetch failed:', errorMessage);
+      console.error('❌ Pricing fetch failed:', errorMessage, 'Payload:', requestPayload);
       
       toast({
         title: "Pricing Error",
@@ -119,6 +139,7 @@ export function usePricing({
     loading,
     error,
     cached,
+    noVariants,
     fetchPricing
   };
 }

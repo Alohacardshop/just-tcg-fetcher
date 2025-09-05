@@ -45,7 +45,7 @@ export function PricingWidget({
   const [selectedCondition, setSelectedCondition] = useState(initialCondition);
   const [selectedPrinting, setSelectedPrinting] = useState(initialPrinting);
 
-  const { pricing, loading, error, cached, fetchPricing } = usePricing({
+  const { pricing, loading, error, cached, noVariants, fetchPricing } = usePricing({
     cardId,
     condition: selectedCondition,
     printing: selectedPrinting,
@@ -168,8 +168,17 @@ export function PricingWidget({
           </div>
         )}
 
+        {/* No Variants Available */}
+        {noVariants && (
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-800">
+              No pricing variants available for the selected condition and printing.
+            </p>
+          </div>
+        )}
+
         {/* Error Display */}
-        {error && (
+        {error && !noVariants && (
           <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
             <p className="text-sm text-red-800">{error}</p>
           </div>

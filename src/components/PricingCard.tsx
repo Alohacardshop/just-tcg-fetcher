@@ -21,7 +21,7 @@ export function PricingCard({
   printing = 'Normal',
   className 
 }: PricingCardProps) {
-  const { pricing, loading, error, cached, fetchPricing } = usePricing({
+  const { pricing, loading, error, cached, noVariants, fetchPricing } = usePricing({
     cardId,
     condition,
     printing,
@@ -90,7 +90,16 @@ export function PricingCard({
             </div>
           )}
 
-          {error && (
+          {noVariants && (
+            <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <AlertCircle className="h-4 w-4 text-blue-600" />
+              <span className="text-sm text-blue-800">
+                No pricing variants available for {condition} condition, {printing} printing
+              </span>
+            </div>
+          )}
+
+          {error && !noVariants && (
             <div className="flex items-center gap-2 p-3 bg-destructive/10 text-destructive rounded-lg">
               <AlertCircle className="h-4 w-4" />
               <span className="text-sm">{error}</span>

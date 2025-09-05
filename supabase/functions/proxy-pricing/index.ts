@@ -206,6 +206,7 @@ interface PricingResponse {
   pricing?: any;
   cached?: boolean;
   error?: string;
+  status?: number; // Add status for better error handling
 }
 
 serve(async (req) => {
@@ -232,14 +233,17 @@ serve(async (req) => {
 
     const { cardId, condition = 'Near Mint', printing = 'Normal', refresh = false }: PricingRequest = await req.json();
     
+    // Log the complete request payload for debugging
+    const requestPayload = { cardId, condition, printing, refresh };
+    console.log(`🏷️ Pricing request payload:`, requestPayload);
+    
     if (!cardId) {
+      console.error('❌ Missing cardId in request payload');
       return new Response(
-        JSON.stringify({ success: false, error: 'JustTCG card ID is required' }),
+        JSON.stringify({ success: false, error: 'JustTCG card ID is required', status: 400 }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    console.log(`🏷️ Fetching pricing for card: ${cardId}, condition: ${condition}, printing: ${printing}, refresh: ${refresh}`);
 
     // First, get the card details to extract game and set info
     const { data: cardData, error: cardError } = await supabaseClient
@@ -253,9 +257,13 @@ serve(async (req) => {
       .maybeSingle();
 
     if (cardError || !cardData) {
-      console.error('Card not found:', cardId);
+      console.error('❌ Card not found for cardId:', cardId);
       return new Response(
-        JSON.stringify({ success: false, error: `Card not found: ${cardId}` }),
+        JSON.stringify({ 
+          success: false, 
+          error: `Card not found: ${cardId}`, 
+          status: 404 
+        }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -317,11 +325,12 @@ serve(async (req) => {
       );
 
       if (!targetCard || !targetCard.variants) {
-        console.warn(`No pricing variants found for card: ${cardId}`);
+        console.warn(`📭 No pricing variants found for: ${cardId} (${condition}, ${printing})`);
         return new Response(
           JSON.stringify({ 
             success: false, 
-            error: 'No pricing data available for this card' 
+            error: 'No pricing variants available for this card',
+            status: 404
           }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -337,11 +346,12 @@ serve(async (req) => {
       });
 
       if (!targetVariant) {
-        console.warn(`No pricing found for condition: ${condition}, printing: ${printing}`);
+        console.warn(`📭 No pricing found for: ${cardId} (${condition}, ${printing})`);
         return new Response(
           JSON.stringify({ 
             success: false, 
-            error: `No pricing available for ${condition} condition, ${printing} printing` 
+            error: `No pricing available for ${condition} condition, ${printing} printing`,
+            status: 404
           }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
@@ -390,20 +400,25 @@ serve(async (req) => {
       );
 
     } catch (error) {
-      console.error('Error fetching pricing from JustTCG:', error);
+      console.error('❌ Error fetching pricing from JustTCG:', error.message, 'Payload:', requestPayload);
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: `Failed to fetch pricing: ${error.message}` 
+          error: `Pricing service error: ${error.message}`,
+          status: 500
         }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
   } catch (error) {
-    console.error('Error in proxy-pricing function:', error);
+    console.error('❌ Error in proxy-pricing function:', error.message);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ 
+        success: false, 
+        error: `Service error: ${error.message}`,
+        status: 500 
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
