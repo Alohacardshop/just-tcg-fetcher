@@ -176,7 +176,110 @@ export async function fetchJsonWithRetry(
           body: networkError.message
         };
         console.error(`❌ Network error on attempt ${attempt} (${duration}ms):`, networkError.message);
+}
+
+/**
+ * Complete pagination for sets - loops until meta.hasMore === false
+ * Returns all sets for a given game with proper accumulation across pages
+ */
+export async function listAllSets(gameId: string, pageSize: number = 100): Promise<any[]> {
+  console.log(`📚 Starting complete sets pagination for game: ${gameId} (pageSize: ${pageSize})`);
+  
+  let allSets: any[] = [];
+  let offset = 0;
+  let hasMore = true;
+  let pageCount = 0;
+  let expectedTotal: number | null = null;
+  
+  while (hasMore) {
+    pageCount++;
+    const startTime = Date.now();
+    
+    try {
+      console.log(`📄 Fetching sets page ${pageCount} (offset: ${offset}, limit: ${pageSize})`);
+      
+      const url = buildUrl('sets', {
+        game: gameId,
+        limit: pageSize,
+        offset: offset
+      });
+      
+      const response = await fetchJsonWithRetry(url);
+      const duration = Date.now() - startTime;
+      
+      // Extract data and metadata
+      const pageData = response.data || response.sets || [];
+      const meta = response.meta || response._metadata || {};
+      
+      // Store expected total from first page
+      if (pageCount === 1 && meta.total !== undefined) {
+        expectedTotal = meta.total;
+        console.log(`📊 Expected total sets: ${expectedTotal}`);
       }
+      
+      console.log(`✅ Page ${pageCount} fetched: ${pageData.length} sets (${duration}ms)`);
+      console.log(`📈 Meta info - hasMore: ${meta.hasMore}, total: ${meta.total}, limit: ${meta.limit}, offset: ${meta.offset}`);
+      
+      if (pageData.length === 0) {
+        console.log(`📭 Empty page received, stopping pagination`);
+        break;
+      }
+      
+      // Accumulate data
+      allSets.push(...pageData);
+      
+      // Check meta.hasMore first (most reliable)
+      if (meta.hasMore === false) {
+        console.log(`🏁 meta.hasMore === false, pagination complete`);
+        hasMore = false;
+        break;
+      }
+      
+      // Fallback: if we got fewer items than requested, assume we're done
+      if (pageData.length < pageSize) {
+        console.log(`🏁 Partial page (${pageData.length}/${pageSize}), assuming end of data`);
+        hasMore = false;
+        break;
+      }
+      
+      // Update offset for next page
+      offset += pageData.length;
+      
+      // Safety check: if we've reached expected total, stop
+      if (expectedTotal !== null && allSets.length >= expectedTotal) {
+        console.log(`🏁 Reached expected total (${allSets.length}/${expectedTotal}), stopping`);
+        hasMore = false;
+        break;
+      }
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.error(`❌ Error fetching sets page ${pageCount} (${duration}ms):`, error.message);
+      
+      // If we have some data, return what we got; otherwise re-throw
+      if (allSets.length > 0) {
+        console.warn(`⚠️ Partial data recovered: ${allSets.length} sets from ${pageCount - 1} successful pages`);
+        break;
+      } else {
+        throw error;
+      }
+    }
+  }
+  
+  console.log(`📊 Sets pagination complete for ${gameId}:`);
+  console.log(`   Total sets fetched: ${allSets.length}`);
+  console.log(`   Pages processed: ${pageCount}`);
+  console.log(`   Expected total: ${expectedTotal || 'unknown'}`);
+  
+  // Validate against expected total if available
+  if (expectedTotal !== null && allSets.length !== expectedTotal) {
+    console.warn(`⚠️ Count mismatch: fetched ${allSets.length}, expected ${expectedTotal}`);
+  } else if (expectedTotal !== null) {
+    console.log(`✅ Count matches expected total: ${allSets.length}`);
+  }
+  
+  return allSets;
+}
       
       if (attempt < tries) {
         const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
@@ -192,4 +295,107 @@ export async function fetchJsonWithRetry(
     message: 'All retry attempts failed',
     body: 'Unknown error'
   };
+}
+
+/**
+ * Complete pagination for sets - loops until meta.hasMore === false
+ * Returns all sets for a given game with proper accumulation across pages
+ */
+export async function listAllSets(gameId: string, pageSize: number = 100): Promise<any[]> {
+  console.log(`📚 Starting complete sets pagination for game: ${gameId} (pageSize: ${pageSize})`);
+  
+  let allSets: any[] = [];
+  let offset = 0;
+  let hasMore = true;
+  let pageCount = 0;
+  let expectedTotal: number | null = null;
+  
+  while (hasMore) {
+    pageCount++;
+    const startTime = Date.now();
+    
+    try {
+      console.log(`📄 Fetching sets page ${pageCount} (offset: ${offset}, limit: ${pageSize})`);
+      
+      const url = buildUrl('sets', {
+        game: gameId,
+        limit: pageSize,
+        offset: offset
+      });
+      
+      const response = await fetchJsonWithRetry(url);
+      const duration = Date.now() - startTime;
+      
+      // Extract data and metadata
+      const pageData = response.data || response.sets || [];
+      const meta = response.meta || response._metadata || {};
+      
+      // Store expected total from first page
+      if (pageCount === 1 && meta.total !== undefined) {
+        expectedTotal = meta.total;
+        console.log(`📊 Expected total sets: ${expectedTotal}`);
+      }
+      
+      console.log(`✅ Page ${pageCount} fetched: ${pageData.length} sets (${duration}ms)`);
+      console.log(`📈 Meta info - hasMore: ${meta.hasMore}, total: ${meta.total}, limit: ${meta.limit}, offset: ${meta.offset}`);
+      
+      if (pageData.length === 0) {
+        console.log(`📭 Empty page received, stopping pagination`);
+        break;
+      }
+      
+      // Accumulate data
+      allSets.push(...pageData);
+      
+      // Check meta.hasMore first (most reliable)
+      if (meta.hasMore === false) {
+        console.log(`🏁 meta.hasMore === false, pagination complete`);
+        hasMore = false;
+        break;
+      }
+      
+      // Fallback: if we got fewer items than requested, assume we're done
+      if (pageData.length < pageSize) {
+        console.log(`🏁 Partial page (${pageData.length}/${pageSize}), assuming end of data`);
+        hasMore = false;
+        break;
+      }
+      
+      // Update offset for next page
+      offset += pageData.length;
+      
+      // Safety check: if we've reached expected total, stop
+      if (expectedTotal !== null && allSets.length >= expectedTotal) {
+        console.log(`🏁 Reached expected total (${allSets.length}/${expectedTotal}), stopping`);
+        hasMore = false;
+        break;
+      }
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      console.error(`❌ Error fetching sets page ${pageCount} (${duration}ms):`, error.message);
+      
+      // If we have some data, return what we got; otherwise re-throw
+      if (allSets.length > 0) {
+        console.warn(`⚠️ Partial data recovered: ${allSets.length} sets from ${pageCount - 1} successful pages`);
+        break;
+      } else {
+        throw error;
+      }
+    }
+  }
+  
+  console.log(`📊 Sets pagination complete for ${gameId}:`);
+  console.log(`   Total sets fetched: ${allSets.length}`);
+  console.log(`   Pages processed: ${pageCount}`);
+  console.log(`   Expected total: ${expectedTotal || 'unknown'}`);
+  
+  // Validate against expected total if available
+  if (expectedTotal !== null && allSets.length !== expectedTotal) {
+    console.warn(`⚠️ Count mismatch: fetched ${allSets.length}, expected ${expectedTotal}`);
+  } else if (expectedTotal !== null) {
+    console.log(`✅ Count matches expected total: ${allSets.length}`);
+  }
+  
+  return allSets;
 }

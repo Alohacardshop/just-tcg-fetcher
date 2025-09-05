@@ -6,7 +6,8 @@ import {
   extractDataFromEnvelope,
   normalizeGameSlug,
   probeEnglishOnlySet,
-  fetchJsonWithRetry
+  fetchJsonWithRetry,
+  listAllSets
 } from './api-helpers.ts';
 import { buildUrl, authHeaders } from '../shared/justtcg-client.ts';
 import { logOperationStart, logOperationSuccess, logOperationError, logEarlyReturn, createTimer } from './telemetry.ts';
@@ -227,12 +228,10 @@ async function syncSets(supabaseClient: any, gameId: string) {
     throw new Error(`Game not found: ${gameId}`);
   }
 
-  const { data: sets, totalFetched, pagesFetched, stoppedReason } = await fetchPaginatedData(
-    buildUrl('sets', { game: normalizedGameId }), // Use normalized for API
-    { limit: 200, maxPages: 100, timeoutMs: 90000 }
-  );
+  // Use complete pagination to get all sets
+  const sets = await listAllSets(normalizedGameId, 200);
 
-  console.log(`📊 Sets pagination complete: ${totalFetched} sets, ${pagesFetched} pages, stopped: ${stoppedReason}`);
+  console.log(`📊 Complete sets fetch: ${sets.length} sets retrieved`);
   console.log(`Found ${sets.length} sets to sync`);
 
   // Upsert sets
@@ -275,7 +274,7 @@ async function syncSets(supabaseClient: any, gameId: string) {
   }
 
   console.log(`Successfully synced ${upsertedSets?.length || 0} sets`);
-  return { synced: upsertedSets?.length || 0, sets: upsertedSets, gameId, setsCount, paginationInfo: { totalFetched, pagesFetched, stoppedReason } };
+  return { synced: upsertedSets?.length || 0, sets: upsertedSets, gameId, setsCount };
 }
 
 async function syncCards(supabaseClient: any, setId: string) {

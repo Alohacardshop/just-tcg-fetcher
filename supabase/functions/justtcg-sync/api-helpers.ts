@@ -8,10 +8,10 @@ import {
   logPaginationProgress,
   createTimer 
 } from './telemetry.ts';
-import { buildUrl, authHeaders, normalizeGameSlug, fetchJsonWithRetry } from '../shared/justtcg-client.ts';
+import { buildUrl, authHeaders, normalizeGameSlug, fetchJsonWithRetry, listAllSets } from '../shared/justtcg-client.ts';
 
 // Re-export for backwards compatibility
-export { normalizeGameSlug, fetchJsonWithRetry };
+export { normalizeGameSlug, fetchJsonWithRetry, listAllSets };
 
 /**
  * JustTCG API Helper Functions
