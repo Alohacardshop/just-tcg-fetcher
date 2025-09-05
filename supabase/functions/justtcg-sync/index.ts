@@ -379,57 +379,77 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
 
     console.log(`Total cards fetched across ${page} pages: ${allCards.length}`);
 
-    // Fetch sealed products with pagination
+    // Fetch sealed products with pagination - try multiple endpoints
     let allSealed: SealedProduct[] = [];
     console.log(`Fetching sealed products for game: ${gameId}, set: ${setName}`);
     
-    try {
-      page = 1;
-      hasMore = true;
+    const sealedEndpoints = [
+      'https://api.justtcg.com/v1/sealed',
+      'https://api.justtcg.com/v1/sealed-products',
+      'https://api.justtcg.com/v1/products'
+    ];
+    
+    let sealedFetched = false;
+    
+    for (const endpoint of sealedEndpoints) {
+      if (sealedFetched) break;
+      
+      try {
+        console.log(`Trying sealed endpoint: ${endpoint}`);
+        page = 1;
+        hasMore = true;
 
-      while (hasMore) {
-        const url = new URL('https://api.justtcg.com/v1/sealed');
-        url.searchParams.set('game', gameId);
-        url.searchParams.set('set', setName);
-        url.searchParams.set('limit', limit.toString());
-        url.searchParams.set('page', page.toString());
+        while (hasMore) {
+          const url = new URL(endpoint);
+          url.searchParams.set('game', gameId);
+          url.searchParams.set('set', setName);
+          url.searchParams.set('limit', limit.toString());
+          url.searchParams.set('page', page.toString());
 
-        console.log(`Fetching page ${page} of sealed products...`);
+          console.log(`Fetching page ${page} of sealed products...`);
 
-        const response = await fetch(url.toString(), {
-          headers: { 'X-API-KEY': apiKey }
-        });
+          const response = await fetch(url.toString(), {
+            headers: { 'X-API-KEY': apiKey }
+          });
 
-        if (!response.ok) {
-          console.log(`No sealed products endpoint available or error: ${response.status}`);
-          break;
-        }
+          if (!response.ok) {
+            console.log(`Sealed endpoint ${endpoint} returned ${response.status}`);
+            break; // Try next endpoint
+          }
 
-        const responseData = await response.json();
-        
-        // Parse response - try different shapes
-        const pageSealed: SealedProduct[] = responseData.data || responseData.sealed || responseData || [];
-        console.log(`Page ${page}: Found ${pageSealed.length} sealed products`);
-        
-        if (pageSealed.length === 0) {
-          hasMore = false;
-        } else {
-          allSealed = allSealed.concat(pageSealed);
+          const responseData = await response.json();
           
-          if (pageSealed.length < limit) {
+          // Parse response - try different shapes
+          const pageSealed: SealedProduct[] = responseData.data || responseData.sealed || responseData.products || responseData || [];
+          console.log(`Page ${page}: Found ${pageSealed.length} sealed products from ${endpoint}`);
+          
+          if (pageSealed.length === 0) {
             hasMore = false;
           } else {
-            page++;
-          }
-          
-          if (page > 20) {
-            console.warn('Reached maximum page limit (20) for sealed, stopping pagination');
-            hasMore = false;
+            allSealed = allSealed.concat(pageSealed);
+            sealedFetched = true; // Mark as successful
+            
+            if (pageSealed.length < limit) {
+              hasMore = false;
+            } else {
+              page++;
+            }
+            
+            if (page > 20) {
+              console.warn('Reached maximum page limit (20) for sealed, stopping pagination');
+              hasMore = false;
+            }
           }
         }
+        
+        if (allSealed.length > 0) {
+          console.log(`Successfully fetched sealed products from ${endpoint}`);
+          break; // Exit endpoint loop if we got data
+        }
+      } catch (error) {
+        console.log(`Sealed endpoint ${endpoint} failed:`, error.message);
+        continue; // Try next endpoint
       }
-    } catch (error) {
-      console.log('Sealed products fetch failed, continuing without sealed:', error.message);
     }
 
     console.log(`Total sealed products fetched: ${allSealed.length}`);

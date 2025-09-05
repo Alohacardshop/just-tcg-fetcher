@@ -22,7 +22,8 @@ import {
   FileText,
   X,
   Shield,
-  RefreshCw
+  RefreshCw,
+  Zap
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -326,6 +327,58 @@ export const DataImportPanel = () => {
       toast({
         title: "Sync Failed",
         description: error.message || "Failed to sync games",
+        variant: "destructive",
+      });
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleFullGameSync = async (gameId: string) => {
+    setIsImporting(true);
+    setImportProgress(0);
+    
+    try {
+      // First sync sets
+      toast({
+        title: "Full Sync Started",
+        description: "Syncing sets and then all cards for this game...",
+      });
+
+      const { data: setsData, error: setsError } = await supabase.functions.invoke('justtcg-sync', {
+        body: { action: 'sync-sets', gameId }
+      });
+
+      if (setsError) throw setsError;
+
+      await fetchSets(gameId); // Refresh sets data
+      
+      // Then get all sets and sync their cards
+      const { data: sets } = await supabase
+        .from('sets')
+        .select('jt_set_id')
+        .eq('game_id', gameId);
+
+      if (sets && sets.length > 0) {
+        // Add sets to selected sets for this game
+        const setIds = sets.map(s => s.jt_set_id);
+        const newSelectedSets = new Map(selectedSets);
+        newSelectedSets.set(gameId, new Set(setIds));
+        setSelectedSets(newSelectedSets);
+        
+        // Then bulk sync
+        await handleBulkSyncCards(gameId);
+      }
+
+      toast({
+        title: "Full Sync Complete",
+        description: `Successfully synced ${setsData?.synced || 0} sets and their cards`,
+      });
+    } catch (error: any) {
+      console.error('Full sync error:', error);
+      toast({
+        title: "Full Sync Failed",
+        description: error.message || "Failed to complete full sync",
         variant: "destructive",
       });
     } finally {
@@ -747,19 +800,33 @@ export const DataImportPanel = () => {
                           </div>
                         </div>
                         
-                        <Button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSyncSets(game.jt_game_id);
-                          }}
-                          disabled={isImporting}
-                          variant="outline"
-                          size="sm"
-                          className="ml-4"
-                        >
-                          <Download className="h-4 w-4 mr-2" />
-                          Sync Sets
-                        </Button>
+                        <div className="flex gap-2 ml-4">
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSyncSets(game.jt_game_id);
+                            }}
+                            disabled={isImporting}
+                            variant="outline"
+                            size="sm"
+                          >
+                            <Download className="h-4 w-4 mr-2" />
+                            Sync Sets
+                          </Button>
+                          <Button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleFullGameSync(game.jt_game_id);
+                            }}
+                            disabled={isImporting}
+                            variant="default"
+                            size="sm"
+                            className="bg-primary text-primary-foreground"
+                          >
+                            <Zap className="h-4 w-4 mr-2" />
+                            Full Sync
+                          </Button>
+                        </div>
                       </div>
                     </CollapsibleTrigger>
                     
@@ -873,18 +940,19 @@ export const DataImportPanel = () => {
                                       set.total_cards > 0 && 
                                       totalSynced >= set.total_cards;
                                     
-                                    switch (set.sync_status) {
-                                      case 'syncing':
-                                        return <Badge variant="secondary" className="text-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Syncing</Badge>;
-                                      case 'success':
-                                        return isSynced 
-                                          ? <Badge variant="default" className="text-green-600"><CheckCircle className="h-3 w-3 mr-1" />Synced</Badge>
-                                          : <Badge variant="secondary" className="text-yellow-600">Partial</Badge>;
-                                      case 'error':
-                                        return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" />Error</Badge>;
-                                      default:
-                                        return <Badge variant="outline">Not synced</Badge>;
-                                    }
+                                     switch (set.sync_status) {
+                                       case 'syncing':
+                                         return <Badge variant="secondary" className="text-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Syncing</Badge>;
+                                       case 'success':
+                                       case 'completed':
+                                         return isSynced 
+                                           ? <Badge variant="default" className="text-green-600"><CheckCircle className="h-3 w-3 mr-1" />Synced</Badge>
+                                           : <Badge variant="secondary" className="text-yellow-600">Partial</Badge>;
+                                       case 'error':
+                                         return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" />Error</Badge>;
+                                       default:
+                                         return <Badge variant="outline">Not synced</Badge>;
+                                     }
                                   };
                                   
                                   return (
