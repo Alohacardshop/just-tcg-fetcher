@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getApiKey, createJustTCGHeaders, fetchFromJustTCG } from './api-helpers.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -73,9 +74,11 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const apiKey = Deno.env.get('JUSTTCG_API_KEY');
-    if (!apiKey) {
-      console.error('JustTCG API key not found');
+    let apiKey: string;
+    try {
+      apiKey = getApiKey();
+    } catch (error) {
+      console.error('JustTCG API key not found:', error.message);
       return new Response(
         JSON.stringify({ error: 'API key not configured' }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -125,15 +128,7 @@ serve(async (req) => {
 async function syncGames(supabaseClient: any, apiKey: string) {
   console.log('Syncing games from JustTCG...');
   
-  const response = await fetch('https://api.justtcg.com/v1/games', {
-    headers: { 'X-API-KEY': apiKey }
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`JustTCG API error: ${response.status} - ${errorText}`);
-    throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
-  }
+  const response = await fetchFromJustTCG('https://api.justtcg.com/v1/games', apiKey);
 
   const data = await response.json();
   
@@ -203,15 +198,7 @@ async function syncSets(supabaseClient: any, apiKey: string, gameId: string) {
     throw new Error(`Game not found: ${gameId}`);
   }
 
-  const response = await fetch(`https://api.justtcg.com/v1/sets?game=${encodeURIComponent(gameId)}`, {
-    headers: { 'X-API-KEY': apiKey }
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`JustTCG API error: ${response.status} - ${errorText}`);
-    throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
-  }
+  const response = await fetchFromJustTCG(`https://api.justtcg.com/v1/sets?game=${encodeURIComponent(gameId)}`, apiKey);
 
   const data = await response.json();
   // Debug response structure
@@ -329,15 +316,7 @@ async function syncCards(supabaseClient: any, apiKey: string, setId: string) {
 
       console.log(`Fetching page ${page} of cards...`);
 
-      const response = await fetch(url.toString(), {
-        headers: { 'X-API-KEY': apiKey }
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`JustTCG API error: ${response.status} - ${errorText}`);
-        throw new Error(`JustTCG API error: ${response.status} - ${errorText}`);
-      }
+      const response = await fetchFromJustTCG(url.toString(), apiKey);
 
       const responseData = await response.json();
       
