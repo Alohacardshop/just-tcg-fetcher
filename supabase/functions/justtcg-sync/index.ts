@@ -112,13 +112,35 @@ async function syncGames(supabaseClient: any, apiKey: string) {
   }
 
   const data = await response.json();
-  const games: Game[] = data.games || [];
+  
+  // Debug logging for response structure
+  console.log('Response keys:', Object.keys(data));
+  console.log('Full response sample:', JSON.stringify(data).substring(0, 500) + '...');
+  
+  // Robust parsing - try different response shapes
+  let games: any[] = [];
+  if (Array.isArray(data)) {
+    games = data;
+    console.log('Response is direct array with', games.length, 'items');
+  } else if (data.games && Array.isArray(data.games)) {
+    games = data.games;
+    console.log('Found games array with', games.length, 'items');
+  } else if (data.data && Array.isArray(data.data)) {
+    games = data.data;
+    console.log('Found data array with', games.length, 'items');
+  } else if (data.data && data.data.games && Array.isArray(data.data.games)) {
+    games = data.data.games;
+    console.log('Found nested data.games array with', games.length, 'items');
+  } else {
+    console.error('Could not find games array in response structure');
+    return { synced: 0, error: 'No games array found in response' };
+  }
 
   console.log(`Found ${games.length} games to sync`);
 
   // Upsert games
   const gameRecords = games.map(game => ({
-    jt_game_id: game.game_id,
+    jt_game_id: game.game_id || game.id?.toString(),
     name: game.name,
     slug: game.slug,
     sets_count: game.sets_count,
