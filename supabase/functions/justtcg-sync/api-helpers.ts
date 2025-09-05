@@ -303,6 +303,9 @@ export async function listAllSets(gameId: string, pageSize: number = 100): Promi
     console.warn(`⚠️ Count mismatch: fetched ${allSets.length}, expected ${expectedTotal}`);
   } else if (expectedTotal !== null) {
     console.log(`✅ Count matches expected total: ${allSets.length}`);
+  }
+  
+  return allSets;
 }
 
 /**
