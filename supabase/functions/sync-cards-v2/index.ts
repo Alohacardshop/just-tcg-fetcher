@@ -37,9 +37,10 @@ function normalizeGameSlug(gameSlug: string): string {
     'pokemon-jp': 'pokemon-japan',
     'pokemon-japanese': 'pokemon-japan',
     'pokemon-japan-tcg': 'pokemon-japan',
-    'magic-the-gathering': 'magic',
-    'mtg': 'magic',
-    'magic-tcg': 'magic',
+    // Fixed: Magic game normalization - keep as 'mtg' for JustTCG API
+    'magic-the-gathering': 'mtg',
+    'magic': 'mtg',
+    'magic-tcg': 'mtg',
     'yugioh': 'yu-gi-oh',
     'yugioh-tcg': 'yu-gi-oh',
     'ygo': 'yu-gi-oh'
@@ -196,7 +197,7 @@ export class JustTCGClient {
 
         while (page < 5) { // Reduced safety cap
           page++;
-          const url = buildUrl('sets', { game: normalizedGame, limit: pageSize, offset });
+          const url = buildUrl('sets', { game: normalizedGame, pageSize: pageSize, page: page });
           console.log(`🔎 JustTCG sets lookup attempt ${page}: searching for "${searchTerm}"`);
           
           const response = await fetchJsonWithRetry(url);
