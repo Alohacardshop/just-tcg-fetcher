@@ -404,7 +404,6 @@ export class JustTCGClient {
     console.log(`   Pagination mode: ${paginationMode}`);
   }
 }
-}
 
 // ===== SYNC MANAGER =====
 
