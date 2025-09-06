@@ -156,29 +156,71 @@ export class JustTCGClient {
   async resolveSetIdentifier(gameId: string, setId: string): Promise<string> {
     try {
       console.log(`🔍 Resolving set identifier for ${gameId}/${setId}`);
-      
-      // First, try to get set details from our database to find the code
+
+      // If setId already looks like a short code (e.g., "10e"), keep it
+      const looksLikeCode = setId && setId.length <= 6 && !setId.includes(' ');
+      if (looksLikeCode) {
+        console.log(`✔️ setId already looks like a code: ${setId}`);
+        return setId;
+      }
+
       const supabaseUrl = Deno.env.get('SUPABASE_URL');
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-      
+
+      // 1) Try DB first (our "sets" table)
       if (supabaseUrl && supabaseKey) {
         const supabase = createClient(supabaseUrl, supabaseKey);
         const { data: setData } = await supabase
           .from('sets')
-          .select('code, jt_set_id')
+          .select('code, jt_set_id, name')
           .eq('jt_set_id', setId)
-          .single();
-        
+          .maybeSingle();
+
         if (setData?.code) {
-          console.log(`✅ Using set code: ${setData.code} instead of ${setId}`);
+          console.log(`✅ Using set code from DB: ${setData.code} (for ${setId})`);
           return setData.code;
         }
       }
-      
-      console.log(`📝 No code found, using original setId: ${setId}`);
+
+      // 2) Fallback: query JustTCG /sets to discover the code
+      const normalizedGame = normalizeGameSlug(gameId);
+      const pageSize = 200;
+      let offset = 0;
+      let page = 0;
+
+      while (page < 10) { // safety cap
+        page++;
+        const url = buildUrl('sets', { game: normalizedGame, limit: pageSize, offset });
+        const response = await fetchJsonWithRetry(url);
+        const items = (response?.data || response?.sets || response?.items || []) as any[];
+        if (!Array.isArray(items) || items.length === 0) {
+          break;
+        }
+
+        const needle = (setId || '').toLowerCase().trim();
+        for (const s of items) {
+          const cand = [s?.id, s?.name, s?.code, s?.slug, s?.provider_id]
+            .filter(Boolean)
+            .map((v: string) => String(v).toLowerCase().trim());
+
+          if (cand.includes(needle)) {
+            const candidateCode = s?.code || s?.id;
+            if (candidateCode) {
+              console.log(`🔎 Found code via API for "${setId}": ${candidateCode}`);
+              return String(candidateCode);
+            }
+          }
+        }
+
+        // Continue pagination
+        offset += pageSize;
+        if (items.length < pageSize) break;
+      }
+
+      console.log(`📝 No code found via DB or API, using original setId: ${setId}`);
       return setId;
-    } catch (error) {
-      console.warn(`⚠️ Error resolving set identifier, using original: ${setId}`, error.message);
+    } catch (error: any) {
+      console.warn(`⚠️ Error resolving set identifier, using original: ${setId}`, error?.message || error);
       return setId;
     }
   }
