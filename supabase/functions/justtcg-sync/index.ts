@@ -783,11 +783,11 @@ async function syncCards(supabaseClient: any, setId: string) {
       stoppedReason: 'completed'
     }
   };
+}
+catch (error) {
+  console.error('Error syncing cards:', error);
   
-} catch (error) {
-    console.error('Error syncing cards:', error);
-    
-    // Determine if this was a cancellation or other error
+  // Determine if this was a cancellation or other error
     const isCancellation = error.message?.includes('cancelled by admin');
     const finalStatus = isCancellation ? 'cancelled' : 'error';
     
