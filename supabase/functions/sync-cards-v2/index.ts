@@ -949,7 +949,7 @@ async function syncCardsV2(
             throw upsertError;
           }
 
-          // Extract and insert variant pricing data
+          // Extract and insert variant pricing data - capture ALL variants, even without pricing
           const variantPrices: any[] = [];
           const safeUpserted = Array.isArray(upsertedCards) ? upsertedCards : [];
           
@@ -958,19 +958,42 @@ async function syncCardsV2(
             const variants = Array.isArray(safeCard.variants) ? safeCard.variants : [];
             const cardRecord = safeUpserted[index];
             
-            if (cardRecord && variants.length > 0) {
-              variants.forEach(variant => {
-                const safeVariant = variant && typeof variant === 'object' ? variant : {};
+            if (cardRecord) {
+              // If no variants exist, create default entries for all common conditions and printings
+              if (variants.length === 0) {
+                const defaultConditions = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
+                const defaultPrintings = ['Normal', 'Foil', 'Holofoil'];
                 
-                // Check for pricing data using JustTCG field names
-                const hasPrice = safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d;
-                
-                if (hasPrice) {
+                defaultConditions.forEach(condition => {
+                  defaultPrintings.forEach(printing => {
+                    variantPrices.push({
+                      card_id: cardRecord.id,
+                      condition,
+                      variant: printing,
+                      market_price: 99999, // Sentinel value for missing pricing
+                      low_price: null,
+                      high_price: null,
+                      currency: 'USD',
+                      source: 'JustTCG',
+                      fetched_at: new Date().toISOString(),
+                      created_at: new Date().toISOString(),
+                      updated_at: new Date().toISOString()
+                    });
+                  });
+                });
+              } else {
+                // Process all existing variants, including those without pricing
+                variants.forEach(variant => {
+                  const safeVariant = variant && typeof variant === 'object' ? variant : {};
+                  
+                  // Use pricing data if available, otherwise sentinel value
+                  const marketPrice = safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d || 99999;
+                  
                   variantPrices.push({
                     card_id: cardRecord.id,
-                    condition: typeof safeVariant.condition === 'string' ? safeVariant.condition : 'Unknown',
-                    variant: typeof safeVariant.printing === 'string' ? safeVariant.printing : 'Unknown',
-                    market_price: safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d || null,
+                    condition: typeof safeVariant.condition === 'string' ? safeVariant.condition : 'Near Mint',
+                    variant: typeof safeVariant.printing === 'string' ? safeVariant.printing : 'Normal',
+                    market_price: marketPrice,
                     low_price: safeVariant.minPrice30d || safeVariant.minPrice7d || null,
                     high_price: safeVariant.maxPrice30d || safeVariant.maxPrice7d || null,
                     currency: 'USD',
@@ -979,8 +1002,8 @@ async function syncCardsV2(
                     created_at: new Date().toISOString(),
                     updated_at: new Date().toISOString()
                   });
-                }
-              });
+                });
+              }
             }
           });
 
@@ -1061,7 +1084,7 @@ async function syncCardsV2(
               throw sealedError;
             }
 
-            // Extract and insert sealed pricing data
+            // Extract and insert sealed pricing data - capture ALL variants, even without pricing
             const sealedPrices: any[] = [];
             const safeUpsertedSealed = Array.isArray(upsertedSealed) ? upsertedSealed : [];
             
@@ -1070,18 +1093,42 @@ async function syncCardsV2(
               const variants = Array.isArray(safeProduct.variants) ? safeProduct.variants : [];
               const productRecord = safeUpsertedSealed[index];
               
-              if (productRecord && variants.length > 0) {
-                variants.forEach(variant => {
-                  const safeVariant = variant && typeof variant === 'object' ? variant : {};
+              if (productRecord) {
+                // If no variants exist, create default entries for sealed products
+                if (variants.length === 0) {
+                  const defaultConditions = ['Near Mint', 'Lightly Played', 'Moderately Played', 'Heavily Played', 'Damaged'];
+                  const defaultVariants = ['Normal', 'First Edition', 'Limited Edition'];
                   
-                  const hasPrice = safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d;
-                  
-                  if (hasPrice) {
+                  defaultConditions.forEach(condition => {
+                    defaultVariants.forEach(variant => {
+                      sealedPrices.push({
+                        product_id: productRecord.id,
+                        condition,
+                        variant,
+                        market_price: 99999, // Sentinel value for missing pricing
+                        low_price: null,
+                        high_price: null,
+                        currency: 'USD',
+                        source: 'JustTCG',
+                        fetched_at: new Date().toISOString(),
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                      });
+                    });
+                  });
+                } else {
+                  // Process all existing variants, including those without pricing
+                  variants.forEach(variant => {
+                    const safeVariant = variant && typeof variant === 'object' ? variant : {};
+                    
+                    // Use pricing data if available, otherwise sentinel value
+                    const marketPrice = safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d || 99999;
+                    
                     sealedPrices.push({
                       product_id: productRecord.id,
-                      condition: typeof safeVariant.condition === 'string' ? safeVariant.condition : 'Unknown',
-                      variant: typeof safeVariant.printing === 'string' ? safeVariant.printing : 'Unknown',
-                      market_price: safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d || null,
+                      condition: typeof safeVariant.condition === 'string' ? safeVariant.condition : 'Near Mint',
+                      variant: typeof safeVariant.printing === 'string' ? safeVariant.printing : 'Normal',
+                      market_price: marketPrice,
                       low_price: safeVariant.minPrice30d || safeVariant.minPrice7d || null,
                       high_price: safeVariant.maxPrice30d || safeVariant.maxPrice7d || null,
                       currency: 'USD',
@@ -1090,8 +1137,8 @@ async function syncCardsV2(
                       created_at: new Date().toISOString(),
                       updated_at: new Date().toISOString()
                     });
-                  }
-                });
+                  });
+                }
               }
             });
 
