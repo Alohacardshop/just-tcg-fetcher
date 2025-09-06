@@ -497,6 +497,7 @@ async function routeRequest(req: Request): Promise<Response> {
 
     // Validate required parameters with defensive guards
     const setId = typeof requestData.setId === 'string' ? requestData.setId.trim() : '';
+    const gameId = typeof requestData.gameId === 'string' ? requestData.gameId.trim() : '';
     const operationId = typeof requestData.operationId === 'string' ? requestData.operationId : undefined;
     const isBackground = Boolean(requestData.background);
 
@@ -523,10 +524,10 @@ async function routeRequest(req: Request): Promise<Response> {
     if (isBackground) {
       // Use EdgeRuntime.waitUntil if available, otherwise process synchronously
       if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
-        EdgeRuntime.waitUntil(syncCardsV2(supabaseClient, syncManager, setId, operationId));
+        EdgeRuntime.waitUntil(syncCardsV2(supabaseClient, syncManager, setId, operationId, gameId));
       } else {
         // Fallback: start async processing
-        syncCardsV2(supabaseClient, syncManager, setId, operationId).catch(error => {
+        syncCardsV2(supabaseClient, syncManager, setId, operationId, gameId).catch(error => {
           console.error('Background sync failed:', error);
         });
       }
@@ -538,7 +539,7 @@ async function routeRequest(req: Request): Promise<Response> {
     }
 
     // Synchronous processing
-    const result = await syncCardsV2(supabaseClient, syncManager, setId, operationId);
+    const result = await syncCardsV2(supabaseClient, syncManager, setId, operationId, gameId);
     
     return new Response(
       JSON.stringify(result),
@@ -562,7 +563,8 @@ async function syncCardsV2(
   supabaseClient: any, 
   syncManager: SyncManager, 
   setId: string, 
-  operationId?: string
+  operationId?: string,
+  providedGameId?: string
 ) {
   const jobId = setId; // Use setId as jobId for tracking
   let totalCards = 0;
@@ -598,12 +600,12 @@ async function syncCardsV2(
     // Extract data with defensive guards
     const gameId = (setData.games && typeof setData.games.jt_game_id === 'string') 
       ? setData.games.jt_game_id 
-      : '';
+      : (typeof providedGameId === 'string' ? providedGameId : '');
     const setName = typeof setData.name === 'string' ? setData.name : setId;
     const expectedTotalCards = typeof setData.total_cards === 'number' ? setData.total_cards : 0;
 
     if (!gameId) {
-      const errorMsg = `Invalid game data for set: ${setId}`;
+      const errorMsg = `Invalid game data for set: ${setId}. Please ensure the set exists and has a valid game association.`;
       await syncManager.updateSetStatus(setId, 'error', errorMsg);
       throw new Error(errorMsg);
     }
