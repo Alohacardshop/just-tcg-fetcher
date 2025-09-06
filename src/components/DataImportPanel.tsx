@@ -730,10 +730,40 @@ export const DataImportPanel = () => {
         });
       }
     } catch (error: any) {
-      console.error('Error syncing cards:', error);
+      console.error('❌ Card sync error:', error);
+      
+      // Enhanced error logging and display
+      let errorMessage = "Failed to sync cards";
+      let errorDetails = "";
+      
+      if (error?.message) {
+        errorMessage = error.message;
+      }
+      
+      // Handle Supabase function invoke errors
+      if (error?.context?.body) {
+        try {
+          const errorBody = typeof error.context.body === 'string' 
+            ? JSON.parse(error.context.body) 
+            : error.context.body;
+          
+          if (errorBody.error) {
+            errorMessage = errorBody.message || errorBody.error;
+            errorDetails = errorBody.code ? ` (Code: ${errorBody.code})` : "";
+          }
+        } catch (parseError) {
+          console.error('Failed to parse error body:', parseError);
+        }
+      }
+      
+      // Handle HTTP status errors
+      if (error?.context?.status) {
+        errorDetails += ` [HTTP ${error.context.status}]`;
+      }
+      
       toast({
-        title: "Sync Failed",
-        description: error?.message || "Failed to sync cards",
+        title: "Card Sync Failed",
+        description: `${errorMessage}${errorDetails}`,
         variant: "destructive",
       });
     } finally {
@@ -1387,13 +1417,37 @@ export const DataImportPanel = () => {
                                           )}
                                           {set.release_date && <span>Released: {set.release_date}</span>}
                                         </div>
-                                        {set.last_sync_error && (
-                                          <div className="text-xs text-red-500 mt-1 truncate">
-                                            Error: {set.last_sync_error}
-                                          </div>
-                                        )}
-                                      </div>
-                                       <div className="flex gap-2">
+                                         {set.last_sync_error && (
+                                           <div className="text-xs text-red-500 mt-1 truncate">
+                                             Error: {set.last_sync_error}
+                                           </div>
+                                         )}
+                                       </div>
+                                       
+                                       {/* Special test button for Aquapolis */}
+                                       {set.jt_set_id === 'Aquapolis' && (
+                                         <div className="mb-2">
+                                           <Button
+                                             onClick={async () => {
+                                               console.log('🧪 Testing Aquapolis sync with params:', {
+                                                 gameId: game?.jt_game_id,
+                                                 setId: set.jt_set_id,
+                                                 gameDbId: game?.id,
+                                                 setDbId: set.id
+                                               });
+                                               await handleSyncCards(set.jt_set_id, game?.jt_game_id);
+                                             }}
+                                             disabled={isImporting || !game?.jt_game_id}
+                                             variant="secondary"
+                                             size="sm"
+                                             className="text-xs"
+                                           >
+                                             🧪 Test Aquapolis
+                                           </Button>
+                                         </div>
+                                       )}
+                                       
+                                        <div className="flex gap-2">
                                           <Button
                                             onClick={() => handleSyncCards(set.jt_set_id, game?.jt_game_id)}
                                             disabled={isImporting || (set.sync_status === 'syncing' && !isStuck) || !game?.jt_game_id}

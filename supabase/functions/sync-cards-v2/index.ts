@@ -501,20 +501,65 @@ async function routeRequest(req: Request): Promise<Response> {
     const operationId = typeof requestData.operationId === 'string' ? requestData.operationId : undefined;
     const isBackground = Boolean(requestData.background);
 
+    console.log('📥 sync-cards-v2 request:', { setId, gameId, operationId, isBackground });
+
     if (!setId) {
+      console.error('❌ Missing setId parameter');
       return new Response(
-        JSON.stringify({ error: 'setId is required' }),
+        JSON.stringify({ 
+          error: 'MISSING_SET_ID', 
+          message: 'setId is required',
+          code: 400
+        }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!gameId) {
+      console.error('❌ Missing gameId parameter');
+      return new Response(
+        JSON.stringify({ 
+          error: 'MISSING_GAME_ID', 
+          message: 'gameId is required',
+          code: 400
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Verify environment variables
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const justTcgApiKey = Deno.env.get('JUSTTCG_API_KEY');
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('❌ Missing Supabase environment variables');
+      return new Response(
+        JSON.stringify({ 
+          error: 'MISSING_SUPABASE_CONFIG', 
+          message: 'Supabase configuration is incomplete',
+          code: 500
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (!justTcgApiKey) {
+      console.error('❌ Missing JUSTTCG_API_KEY environment variable');
+      return new Response(
+        JSON.stringify({ 
+          error: 'MISSING_API_KEY', 
+          message: 'JustTCG API key is not configured',
+          code: 500
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
     console.log(`🚀 Starting sync-cards-v2 for setId: ${setId}, operationId: ${operationId || 'none'}, background: ${isBackground}`);
 
     // Initialize Supabase client
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
 
     // Initialize sync manager and client
     const syncManager = new SyncManager(supabaseClient);
