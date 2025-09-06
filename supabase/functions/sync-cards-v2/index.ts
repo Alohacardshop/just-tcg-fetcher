@@ -3,11 +3,432 @@
  * 
  * This function implements defensive programming patterns to prevent crashes
  * from undefined arrays, null responses, and other edge cases.
+ * All shared code is included directly in this file as required for edge functions.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.2';
-import { justTCGClient } from '../justtcg-sync/justtcg-client.ts';
-import { SyncManager } from '../justtcg-sync/sync-manager.ts';
+
+// ===== SHARED API HELPERS =====
+
+/**
+ * Gets the JustTCG API key from environment
+ */
+function getJustTCGApiKey(): string {
+  const apiKey = Deno.env.get('JUSTTCG_API_KEY');
+  if (!apiKey) {
+    throw new Error('JUSTTCG_API_KEY not configured in environment');
+  }
+  return apiKey;
+}
+
+/**
+ * Normalizes game slugs for JustTCG API consistency
+ */
+function normalizeGameSlug(gameSlug: string): string {
+  const normalized = gameSlug.toLowerCase().trim();
+  const normalizationMap: Record<string, string> = {
+    'pokemon-tcg': 'pokemon',
+    'pokemon-english': 'pokemon',
+    'pokemon-us': 'pokemon',
+    'pokemon-en': 'pokemon',
+    'pokemon-global': 'pokemon',
+    'pokemon-international': 'pokemon',
+    'pokemon-tcg-english': 'pokemon',
+    'pokemon-jp': 'pokemon-japan',
+    'pokemon-japanese': 'pokemon-japan',
+    'pokemon-japan-tcg': 'pokemon-japan',
+    'magic-the-gathering': 'magic',
+    'mtg': 'magic',
+    'magic-tcg': 'magic',
+    'yugioh': 'yu-gi-oh',
+    'yugioh-tcg': 'yu-gi-oh',
+    'ygo': 'yu-gi-oh'
+  };
+  return normalizationMap[normalized] || normalized;
+}
+
+/**
+ * Builds JustTCG API URL with proper base and parameters
+ */
+function buildUrl(path: string, params: Record<string, string | number> = {}): string {
+  const JUSTTCG_BASE_URL = 'https://api.justtcg.com/v1';
+  const url = new URL(`${JUSTTCG_BASE_URL}/${path}`);
+  
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      url.searchParams.append(key, String(value));
+    }
+  });
+  
+  return url.toString();
+}
+
+/**
+ * Returns standardized authentication headers for JustTCG API
+ */
+function createJustTCGHeaders(apiKey: string): Record<string, string> {
+  if (!apiKey) {
+    throw new Error('API key is required for JustTCG headers');
+  }
+  
+  return {
+    'X-API-Key': apiKey,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    'User-Agent': 'Supabase-Edge-Function/1.0'
+  };
+}
+
+/**
+ * Fetch with retry logic and proper error handling
+ */
+async function fetchJsonWithRetry(
+  url: string,
+  tries = 3,
+  delay = 1000
+): Promise<any> {
+  const apiKey = getJustTCGApiKey();
+  const headers = createJustTCGHeaders(apiKey);
+  
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    const startTime = Date.now();
+    
+    try {
+      console.log(`🔄 JustTCG API attempt ${attempt}/${tries}: ${url}`);
+      
+      const response = await fetch(url, { 
+        method: 'GET',
+        headers 
+      });
+      
+      const duration = Date.now() - startTime;
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`✅ JustTCG API success on attempt ${attempt} (${duration}ms)`);
+        return data;
+      } else {
+        throw {
+          status: response.status,
+          message: `JustTCG API error: ${response.status} - ${response.statusText}`,
+          response
+        };
+      }
+    } catch (error: any) {
+      const duration = Date.now() - startTime;
+      
+      if (attempt === tries) {
+        console.error(`❌ JustTCG API failed after ${tries} attempts (${duration}ms):`, error);
+        throw error;
+      } else {
+        console.warn(`⚠️ JustTCG API attempt ${attempt} failed (${duration}ms), retrying in ${delay}ms:`, error.message || error);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 1.5; // Exponential backoff
+      }
+    }
+  }
+}
+
+// ===== JUSTTCG CLIENT =====
+
+export interface JustTCGCardPage {
+  data?: any[];
+  cards?: any[];
+  meta?: {
+    hasMore?: boolean;
+    total?: number;
+    limit?: number;
+    offset?: number;
+  };
+}
+
+export class JustTCGClient {
+  private apiKey: string;
+
+  constructor() {
+    this.apiKey = getJustTCGApiKey();
+  }
+
+  /**
+   * Generator function that yields card pages as arrays only
+   * Never yields undefined/null - always returns empty array on error
+   */
+  async* getCards(gameId: string, setId: string, pageSize = 100): AsyncGenerator<any[], void, unknown> {
+    console.log(`🃏 Starting JustTCGClient.getCards for ${gameId}/${setId} (pageSize: ${pageSize})`);
+    
+    const normalizedGameId = normalizeGameSlug(gameId);
+    let offset = 0;
+    let hasMore = true;
+    let pageCount = 0;
+    let expectedTotal: number | null = null;
+    
+    while (hasMore) {
+      pageCount++;
+      const startTime = Date.now();
+      
+      try {
+        console.log(`📄 JustTCGClient fetching page ${pageCount} (offset: ${offset}, limit: ${pageSize})`);
+        
+        // Build query parameters
+        const params: Record<string, string | number> = {
+          game: normalizedGameId,
+          set: setId,
+          limit: pageSize,
+          offset: offset
+        };
+        
+        const url = buildUrl('cards', params);
+        const response = await fetchJsonWithRetry(url);
+        const duration = Date.now() - startTime;
+        
+        // Extract data with defensive guards
+        let pageData: any[] = [];
+        if (response && typeof response === 'object') {
+          const rawData = response.data || response.cards || response.items || [];
+          pageData = Array.isArray(rawData) ? rawData : [];
+        }
+        
+        // Extract metadata with defensive guards
+        const meta = (response && typeof response === 'object') 
+          ? (response.meta || response._metadata || {}) 
+          : {};
+        
+        // Store expected total from first page
+        if (pageCount === 1 && typeof meta.total === 'number') {
+          expectedTotal = meta.total;
+          console.log(`📊 JustTCGClient expected total cards: ${expectedTotal}`);
+        }
+        
+        console.log(`✅ JustTCGClient page ${pageCount} fetched: ${pageData.length} cards (${duration}ms)`);
+        console.log(`📈 JustTCGClient meta - hasMore: ${meta.hasMore}, total: ${meta.total}, offset: ${meta.offset}`);
+        
+        // Always yield an array, even if empty
+        yield pageData;
+        
+        // Check for end conditions
+        if (pageData.length === 0) {
+          console.log(`📭 JustTCGClient empty page received, stopping pagination`);
+          break;
+        }
+        
+        // Check meta.hasMore first (most reliable)
+        if (meta.hasMore === false) {
+          console.log(`🏁 JustTCGClient meta.hasMore === false, pagination complete`);
+          hasMore = false;
+          break;
+        }
+        
+        // Fallback: if we got fewer items than requested, assume we're done
+        if (pageData.length < pageSize) {
+          console.log(`🏁 JustTCGClient partial page (${pageData.length}/${pageSize}), assuming end of data`);
+          hasMore = false;
+          break;
+        }
+        
+        // Update offset for next page
+        offset += pageData.length;
+        
+        // Safety check: prevent infinite loops
+        if (pageCount > 1000) {
+          console.warn(`⚠️ JustTCGClient safety break: too many pages (${pageCount}), stopping`);
+          break;
+        }
+        
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        console.error(`❌ JustTCGClient error fetching page ${pageCount} (${duration}ms):`, error.message);
+        
+        // On error, yield empty array and stop pagination
+        yield [];
+        break;
+      }
+    }
+    
+    console.log(`📊 JustTCGClient pagination complete for ${gameId}/${setId}:`);
+    console.log(`   Pages processed: ${pageCount}`);
+    console.log(`   Expected total: ${expectedTotal || 'unknown'}`);
+  }
+}
+
+// ===== SYNC MANAGER =====
+
+export interface SyncResult {
+  success: boolean;
+  jobId: string;
+  message: string;
+  stats: {
+    totalProcessed: number;
+    totalInserted: number;
+    totalUpdated: number;
+    totalErrors: number;
+    pagesProcessed: number;
+  };
+}
+
+export class SyncManager {
+  private supabaseClient: any;
+
+  constructor(supabaseClient: any) {
+    this.supabaseClient = supabaseClient;
+  }
+
+  /**
+   * Update sync progress with defensive guards
+   */
+  async updateProgress(jobId: string, processed: number, total: number): Promise<void> {
+    try {
+      const safeProcessed = typeof processed === 'number' ? processed : 0;
+      const safeTotal = typeof total === 'number' ? total : 0;
+      
+      console.log(`📊 Sync progress for ${jobId}: ${safeProcessed}/${safeTotal}`);
+      
+      // Update set status with safe values
+      await this.supabaseClient
+        .from('sets')
+        .update({ 
+          cards_synced_count: safeProcessed,
+          last_synced_at: new Date().toISOString()
+        })
+        .eq('jt_set_id', jobId);
+        
+    } catch (error) {
+      console.error(`❌ Error updating progress for ${jobId}:`, error.message);
+      // Don't throw - progress updates should not fail the sync
+    }
+  }
+
+  /**
+   * Process cards in batches with defensive guards
+   */
+  async batchProcess<T>(
+    items: T[], 
+    processor: (batch: T[]) => Promise<any>,
+    batchSize = 50
+  ): Promise<{ processed: number; errors: number }> {
+    // Defensive guard for items array
+    const safeItems = Array.isArray(items) ? items : [];
+    const safeBatchSize = typeof batchSize === 'number' && batchSize > 0 ? batchSize : 50;
+    
+    let processed = 0;
+    let errors = 0;
+    
+    console.log(`🔄 Processing ${safeItems.length} items in batches of ${safeBatchSize}`);
+    
+    for (let i = 0; i < safeItems.length; i += safeBatchSize) {
+      const batch = safeItems.slice(i, i + safeBatchSize);
+      
+      try {
+        await processor(batch);
+        processed += batch.length;
+        console.log(`✅ Processed batch ${Math.floor(i / safeBatchSize) + 1}: ${batch.length} items`);
+      } catch (error) {
+        errors += batch.length;
+        console.error(`❌ Error processing batch starting at index ${i}:`, error.message);
+        // Continue with next batch instead of failing completely
+      }
+    }
+    
+    return { processed, errors };
+  }
+
+  /**
+   * Create sync result with defensive string formatting
+   */
+  createResult(
+    success: boolean, 
+    jobId: string, 
+    message: string, 
+    stats: Partial<SyncResult['stats']> = {}
+  ): SyncResult {
+    // Defensive guards for all stats
+    const safeStats = {
+      totalProcessed: typeof stats.totalProcessed === 'number' ? stats.totalProcessed : 0,
+      totalInserted: typeof stats.totalInserted === 'number' ? stats.totalInserted : 0,
+      totalUpdated: typeof stats.totalUpdated === 'number' ? stats.totalUpdated : 0,
+      totalErrors: typeof stats.totalErrors === 'number' ? stats.totalErrors : 0,
+      pagesProcessed: typeof stats.pagesProcessed === 'number' ? stats.pagesProcessed : 0
+    };
+    
+    // Safe string formatting
+    const safeJobId = typeof jobId === 'string' ? jobId : 'unknown';
+    const safeMessage = typeof message === 'string' ? message : 'No message provided';
+    
+    return {
+      success: Boolean(success),
+      jobId: safeJobId,
+      message: safeMessage,
+      stats: safeStats
+    };
+  }
+
+  /**
+   * Update set status with defensive guards
+   */
+  async updateSetStatus(
+    setId: string, 
+    status: 'syncing' | 'completed' | 'error' | 'partial',
+    error?: string,
+    stats?: Partial<SyncResult['stats']>
+  ): Promise<void> {
+    try {
+      const safeSetId = typeof setId === 'string' ? setId : '';
+      const safeStatus = typeof status === 'string' ? status : 'error';
+      const safeError = typeof error === 'string' ? error : null;
+      
+      const updateData: any = {
+        sync_status: safeStatus,
+        last_synced_at: new Date().toISOString()
+      };
+      
+      if (safeError) {
+        updateData.last_sync_error = safeError;
+      } else if (safeStatus === 'completed') {
+        updateData.last_sync_error = null;
+      }
+      
+      if (stats && typeof stats.totalProcessed === 'number') {
+        updateData.cards_synced_count = stats.totalProcessed;
+      }
+      
+      await this.supabaseClient
+        .from('sets')
+        .update(updateData)
+        .eq('jt_set_id', safeSetId);
+        
+      console.log(`📝 Updated set ${safeSetId} status to: ${safeStatus}`);
+      
+    } catch (error) {
+      console.error(`❌ Error updating set status for ${setId}:`, error.message);
+      // Don't throw - status updates should not fail the sync
+    }
+  }
+
+  /**
+   * Check for cancellation signals with defensive guards
+   */
+  async shouldCancel(operationId?: string): Promise<boolean> {
+    try {
+      const { data } = await this.supabaseClient
+        .from('sync_control')
+        .select('should_cancel')
+        .or('operation_type.eq.force_stop,operation_type.eq.emergency_stop')
+        .limit(1)
+        .maybeSingle();
+      
+      const shouldStop = data?.should_cancel === true;
+      
+      if (shouldStop && operationId) {
+        console.log(`🛑 Cancellation signal received for operation: ${operationId}`);
+      }
+      
+      return shouldStop;
+    } catch (error) {
+      console.error('❌ Error checking cancellation status:', error.message);
+      // If we can't check cancellation status, continue (don't fail the operation)
+      return false;
+    }
+  }
+}
 
 // CORS headers for web app compatibility
 const corsHeaders = {
@@ -76,8 +497,9 @@ async function routeRequest(req: Request): Promise<Response> {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    // Initialize sync manager
+    // Initialize sync manager and client
     const syncManager = new SyncManager(supabaseClient);
+    const justTCGClient = new JustTCGClient();
 
     // For background sync, return immediately and continue processing
     if (isBackground) {
