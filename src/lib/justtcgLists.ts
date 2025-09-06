@@ -104,6 +104,7 @@ export async function listAllCardsBySet(params: ListParams): Promise<{ items: Ca
     
     const url = buildUrl('/cards', queryParams);
     
+    console.log(`🔄 JustTCG API call: ${url}`);
     console.log(`📄 Fetching cards page ${pageCount}, offset: ${offset}${orderBy ? ` (${orderBy} ${order})` : ''}`);
     
     try {
@@ -112,6 +113,14 @@ export async function listAllCardsBySet(params: ListParams): Promise<{ items: Ca
           ...authHeaders(),
           'Content-Type': 'application/json',
         },
+      });
+      
+      console.log(`📥 JustTCG API response:`, {
+        hasData: !!envelope.data,
+        dataType: typeof envelope.data,
+        dataLength: Array.isArray(envelope.data) ? envelope.data.length : 'not array',
+        hasMeta: !!envelope.meta,
+        meta: envelope.meta
       });
       
       const { data, meta } = envelope;
