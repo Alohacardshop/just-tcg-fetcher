@@ -247,14 +247,6 @@ export class JustTCGClient {
     }
   }
 
-      console.log(`⚠️ No code found via DB or API, using original setId: ${setId}`);
-      return { code: setId, source: 'fallback-original' };
-
-    } catch (error: any) {
-      console.warn(`⚠️ Error in set resolution, using original setId: ${setId}`, error?.message || error);
-      return { code: setId, source: 'error-fallback' };
-    }
-  }
 
   /**
    * Enhanced cards fetching with proper set code resolution
