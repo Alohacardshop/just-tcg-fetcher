@@ -16,28 +16,34 @@ npm run deno:check   # Type checking
 
 ## Preventing Brace/EOF Errors
 
-**CRITICAL**: All functions now use Pattern B (named handler) to prevent syntax errors:
+**Both Pattern A (inline) and Pattern B (named handler) prevent syntax errors:**
 
-### ✅ Pattern B (STANDARD): Named Handler
+### ✅ Pattern A (proxy-pricing): Inline Callback
 ```typescript
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+Deno.serve(async (req: Request): Promise<Response> => {
+  try {
+    return await routeRequest(req);
+  } catch (error) {
+    console.error(error);
+    return new Response(
+      JSON.stringify({ error: "Internal error", message: (error as Error)?.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+});
+```
 
+### ✅ Pattern B (justtcg-sync): Named Handler  
+```typescript
 async function handleRequest(req: Request): Promise<Response> {
   try {
-    // Your handler logic here
-    return json({ success: true });
+    return await routeRequest(req);
   } catch (err) {
     console.error(err);
     return json({ error: "Internal error" }, 500);
   }
 }
 
-// Single line - no braces to mismatch  
 Deno.serve(handleRequest);
 ```
 
@@ -54,25 +60,23 @@ Deno.serve(handleRequest);
 }); // <- This dangling }); breaks everything!
 ```
 
-**All functions must use Pattern B consistently.**
+**Each function must use one pattern consistently (no mixing).**
 
 ## Pre-Deploy Checks (MANDATORY)
 
 **Run these before every deployment:**
 
 ```bash
-# Format all functions
+# Use the automated script
+bash scripts/check-functions.sh
+
+# Or run manually:
 deno fmt supabase/functions/**/*.ts
-
-# Lint all functions  
-deno lint supabase/functions/**/*.ts
-
-# Type check all functions
+deno lint supabase/functions/**/*.ts  
 deno check supabase/functions/**/*.ts
-
-# Pattern validation (prevent mixed patterns)
-bash .github/workflows/check-patterns.sh
 ```
+
+**Critical**: These checks catch "Expected semicolon" and EOF errors before deployment.
 
 ## CI/CD Integration
 
@@ -98,7 +102,7 @@ Add these commands to your deployment pipeline:
 
 ## Best Practices
 
-1. **Always use named handler functions** instead of inline callbacks
+1. **Use Pattern A (inline) or Pattern B (named) consistently per file**
 2. **Run `npm run pre-deploy` before every deployment**
 3. **Use the `json()` helper for consistent responses**
 4. **Keep handler logic simple and focused**

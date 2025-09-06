@@ -504,7 +504,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.error(error);
     return new Response(
       JSON.stringify({ error: "Internal error", message: (error as Error)?.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
+      { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
-}); // <— this MUST be the final characters; nothing after this line
+});
