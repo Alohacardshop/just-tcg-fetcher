@@ -16,5 +16,8 @@ major_version = 15
 [functions.justtcg-sync]
 verify_jwt = false
 
+[functions.sync-cards-v2]
+verify_jwt = false
+
 [functions.proxy-pricing]
 verify_jwt = true

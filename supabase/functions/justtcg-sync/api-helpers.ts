@@ -361,12 +361,20 @@ export async function listAllCardsBySet({
       const response = await fetchJsonWithRetry(url);
       const duration = Date.now() - startTime;
       
-      // Extract data and metadata
-      const pageData = response.data || response.cards || [];
-      const meta = response.meta || response._metadata || {};
+      // ===== C. DEFENSIVE GUARDS FOR RESPONSE DATA =====
+      // Extract data and metadata with defensive guards - always ensure arrays
+      let pageData: any[] = [];
+      if (response && typeof response === 'object') {
+        const rawData = response.data || response.cards || [];
+        pageData = Array.isArray(rawData) ? rawData : [];
+      }
       
-      // Store expected total from first page
-      if (pageCount === 1 && meta.total !== undefined) {
+      const meta = (response && typeof response === 'object') 
+        ? (response.meta || response._metadata || {}) 
+        : {};
+      
+      // Store expected total from first page with defensive guards
+      if (pageCount === 1 && typeof meta.total === 'number') {
         expectedTotal = meta.total;
         console.log(`📊 Expected total cards: ${expectedTotal}`);
       }
@@ -379,7 +387,7 @@ export async function listAllCardsBySet({
         break;
       }
       
-      // Accumulate data
+      // Accumulate data - pageData is guaranteed to be an array
       allCards.push(...pageData);
       
       // Check meta.hasMore first (most reliable)

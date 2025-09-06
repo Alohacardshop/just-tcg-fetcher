@@ -379,24 +379,27 @@ async function syncCards(supabaseClient: any, setId: string) {
       gameId: normalizedGameId, 
       setId: setName 
     });
-    // listAllCardsBySet in edge helpers returns a plain array
+    // listAllCardsBySet in edge helpers returns a plain array with defensive guards
     const rawResult: any = cardsResult as any;
     if (Array.isArray(rawResult)) {
       allCards = rawResult;
       cardsMeta = undefined;
     } else {
-      allCards = rawResult.items || rawResult.data || [];
-      cardsMeta = rawResult.meta || rawResult._metadata;
+      // Defensive guards for non-array results
+      const safeResult = rawResult && typeof rawResult === 'object' ? rawResult : {};
+      allCards = Array.isArray(safeResult.items) ? safeResult.items : 
+                  Array.isArray(safeResult.data) ? safeResult.data : [];
+      cardsMeta = safeResult.meta || safeResult._metadata;
     }
     
     console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
     console.log(`🔍 cardsResult structure:`, { 
       isArray: Array.isArray(rawResult),
-      hasItems: !Array.isArray(rawResult) && !!rawResult.items, 
-      itemsLength: !Array.isArray(rawResult) ? rawResult.items?.length : rawResult.length, 
-      hasMeta: !Array.isArray(rawResult) && !!rawResult.meta,
+      hasItems: !Array.isArray(rawResult) && !!rawResult?.items, 
+      itemsLength: !Array.isArray(rawResult) ? (rawResult?.items?.length ?? 0) : rawResult.length, 
+      hasMeta: !Array.isArray(rawResult) && !!rawResult?.meta,
       rawResultType: typeof rawResult,
-      rawResultKeys: Array.isArray(rawResult) ? ['array'] : Object.keys(rawResult)
+      rawResultKeys: Array.isArray(rawResult) ? ['array'] : (rawResult ? Object.keys(rawResult) : [])
     });
   } catch (apiError) {
     console.error(`❌ API call failed:`, apiError);
@@ -440,16 +443,16 @@ async function syncCards(supabaseClient: any, setId: string) {
   let allSealed: SealedProduct[] = [];
   console.log('Skipping sealed endpoint fetch; sealed variants will be captured within card variants.');
   
-  // Log totals for visibility
-  const totalItems = allCards.length;
-  console.log(`Total items from cards endpoint: ${allCards.length}`);
+  // Log totals for visibility with defensive guards
+  const totalItems = Array.isArray(allCards) ? allCards.length : 0;
+  console.log(`Total items from cards endpoint: ${totalItems}`);
   
   // Warn if we expected more items (optional informational log)
   if (expectedTotalCards && totalItems !== expectedTotalCards) {
     console.warn(`Item count mismatch vs set.total_cards. Expected: ${expectedTotalCards}, From cards: ${totalItems}`);
   }
 
-  if (allCards.length === 0 && allSealed.length === 0) {
+  if ((Array.isArray(allCards) ? allCards.length : 0) === 0 && (Array.isArray(allSealed) ? allSealed.length : 0) === 0) {
     console.log('No cards or sealed products found for this set');
     
     // If we expected cards but got none, mark as error, not completed
@@ -518,8 +521,8 @@ async function syncCards(supabaseClient: any, setId: string) {
     .from('sets')
     .update({ 
       sync_status: 'completed',
-      cards_synced_count: cardRecords.length,
-      sealed_synced_count: allSealed.length,
+      cards_synced_count: Array.isArray(cardRecords) ? cardRecords.length : 0,
+      sealed_synced_count: Array.isArray(allSealed) ? allSealed.length : 0,
       last_synced_at: new Date().toISOString(),
       last_sync_error: null
     })
@@ -528,10 +531,10 @@ async function syncCards(supabaseClient: any, setId: string) {
   console.log(`Card sync completed for set: ${setId}`);
   return { 
     setId,
-    synced: cardRecords.length,
-    totalCards: allCards.length,
-    totalSealed: allSealed.length,
-    totalFetched: allCards.length, 
+    synced: Array.isArray(cardRecords) ? cardRecords.length : 0,
+    totalCards: Array.isArray(allCards) ? allCards.length : 0,
+    totalSealed: Array.isArray(allSealed) ? allSealed.length : 0,
+    totalFetched: Array.isArray(allCards) ? allCards.length : 0, 
     meta: cardsMeta,
     stoppedReason: 'completed'
   };
