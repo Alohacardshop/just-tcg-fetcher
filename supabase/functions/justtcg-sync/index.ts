@@ -352,7 +352,7 @@ async function syncCards(supabaseClient: any, setId: string) {
     })
     .eq('jt_set_id', setId);
 
-  try {
+  // Proceed without outer try-catch; errors will bubble up to caller
     // Get the set and game data - we need the set name and game JustTCG ID for the API call
     const { data: setData, error: setError } = await supabaseClient
       .from('sets')
@@ -802,27 +802,6 @@ async function syncCards(supabaseClient: any, setId: string) {
       stoppedReason: 'completed'
     }
   };
-} catch (error) {
-  console.error('Error syncing cards:', error);
-  
-  // Determine if this was a cancellation or other error
-  const isCancellation = (error as any)?.message?.includes('cancelled by admin');
-  const finalStatus = isCancellation ? 'cancelled' : 'error';
-  
-  // Update set with error status
-  try {
-    await supabaseClient
-      .from('sets')
-      .update({ 
-        sync_status: finalStatus,
-        last_sync_error: (error as any)?.message || 'Unknown error'
-      })
-      .eq('jt_set_id', setId);
-  } catch (updateError) {
-    console.error('Error updating set status after sync error:', updateError);
-  }
-    
-  throw error;
 }
 
 async function syncCardsBulk(supabaseClient: any, setIds: string[], operationId?: string) {
