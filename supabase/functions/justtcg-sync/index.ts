@@ -116,7 +116,7 @@ serve(async (req) => {
         break;
       case 'sync-cards-bulk':
         if (!setIds || !Array.isArray(setIds)) throw new Error('setIds array required for sync-cards-bulk');
-        const { operationId } = await req.json();
+        const operationId = body.operationId;
         result = await syncCardsBulk(supabaseClient, setIds, operationId);
         break;
       default:
@@ -316,14 +316,13 @@ async function syncCards(supabaseClient: any, setId: string) {
   
     console.log(`Fetching cards for game: ${gameId} (normalized: ${normalizedGameId}), set: ${setName} (expected: ${expectedTotalCards} cards)`);
 
-    // Use complete pagination to get all cards for the set
-    const allCards = await listAllCardsBySet({
-      gameId: normalizedGameId,
-      setId: setName,
-      pageSize: 200
+    // Get all cards for this set using complete pagination
+    console.log(`🃏 Fetching all cards for set: ${setId} in game: ${gameId}`);
+    const { items: allCards, meta: cardsMeta } = await listAllCardsBySet({ 
+      gameId: normalizedGameId, 
+      setId: setName 
     });
-
-    console.log(`📊 Complete cards fetch: ${allCards.length} cards retrieved`);
+    console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
 
     // Pokemon Japan empty results guard: Check for English-only sets
     if (normalizedGameId === 'pokemon-japan' && allCards.length === 0) {
@@ -513,7 +512,11 @@ async function syncCards(supabaseClient: any, setId: string) {
     sealedSynced: upsertedSealed?.length || 0, 
     sealed: upsertedSealed,
     pricesSynced,
-    paginationInfo: { totalFetched, pagesFetched, stoppedReason }
+    paginationInfo: { 
+      totalFetched: allCards.length, 
+      meta: cardsMeta,
+      stoppedReason: 'completed'
+    }
   };
   
   } catch (error) {
@@ -539,7 +542,33 @@ async function syncCardsBulk(supabaseClient: any, setIds: string[], operationId?
   let totalSynced = 0;
   let errors = 0;
   
+  // Function to check for cancellation signals
+  async function shouldCancel(): Promise<boolean> {
+    if (!operationId) return false;
+    
+    try {
+      const { data } = await supabaseClient
+        .from('sync_control')
+        .select('should_cancel')
+        .eq('operation_type', 'bulk_sync')
+        .eq('operation_id', operationId)
+        .single();
+      
+      return data?.should_cancel === true;
+    } catch (error) {
+      // If we can't check cancellation status, continue
+      return false;
+    }
+  }
+  
   for (const setId of setIds) {
+    // Check for cancellation before processing each set
+    if (await shouldCancel()) {
+      console.log(`🛑 Bulk sync cancelled by admin for operation: ${operationId}`);
+      results.push({ setId, success: false, error: 'Cancelled by admin' });
+      break;
+    }
+    
     try {
       console.log(`Syncing set ${setId} (${results.length + 1}/${setIds.length})`);
       const result = await syncCards(supabaseClient, setId);
