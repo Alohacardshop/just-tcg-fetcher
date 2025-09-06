@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { 
   fetchFromJustTCG, 
@@ -75,7 +74,14 @@ interface SealedProduct {
   }>;
 }
 
-serve(async (req) => {
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders },
+  });
+}
+
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -94,10 +100,7 @@ serve(async (req) => {
       authHeaders();
     } catch (error) {
       console.error('JustTCG API key not found:', error.message);
-      return new Response(
-        JSON.stringify({ error: 'API key not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return json({ error: 'API key not configured' }, 500);
     }
 
     const body = await req.json();
@@ -120,13 +123,7 @@ serve(async (req) => {
         // For background sync, return immediately and continue processing
         if (isBackgroundSync) {
           EdgeRuntime.waitUntil(syncCards(supabaseClient, setId));
-          return new Response(
-            JSON.stringify({ started: true, setId, operationId }),
-            { 
-              status: 202,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            }
-          );
+          return json({ started: true, setId, operationId }, 202);
         }
         
         result = await syncCards(supabaseClient, setId);
@@ -137,13 +134,7 @@ serve(async (req) => {
         // For background sync, return immediately and continue processing
         if (isBackgroundSync) {
           EdgeRuntime.waitUntil(syncCardsBulk(supabaseClient, setIds, operationId));
-          return new Response(
-            JSON.stringify({ started: true, setIds, operationId }),
-            { 
-              status: 202,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-            }
-          );
+          return json({ started: true, setIds, operationId }, 202);
         }
         
         result = await syncCardsBulk(supabaseClient, setIds, operationId);
@@ -152,19 +143,13 @@ serve(async (req) => {
         throw new Error(`Unknown action: ${action}`);
     }
 
-    return new Response(
-      JSON.stringify(result),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return json(result);
 
   } catch (error) {
     console.error('Error in justtcg-sync function:', error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return json({ error: error.message }, 500);
   }
-});
+}
 
 async function syncGames(supabaseClient: any) {
   const operation = 'sync-games';
@@ -352,455 +337,203 @@ async function syncCards(supabaseClient: any, setId: string) {
     })
     .eq('jt_set_id', setId);
 
-  // Proceed without outer try-catch; errors will bubble up to caller
-    // Get the set and game data - we need the set name and game JustTCG ID for the API call
-    const { data: setData, error: setError } = await supabaseClient
-      .from('sets')
-      .select(`
-        id, 
-        game_id, 
-        name,
-        total_cards,
-        games!inner(jt_game_id)
-      `)
-      .eq('jt_set_id', setId)
-      .single();
+  // Get the set and game data - we need the set name and game JustTCG ID for the API call
+  const { data: setData, error: setError } = await supabaseClient
+    .from('sets')
+    .select(`
+      id, 
+      game_id, 
+      name,
+      total_cards,
+      games!inner(jt_game_id)
+    `)
+    .eq('jt_set_id', setId)
+    .single();
 
-    if (setError || !setData) {
-      throw new Error(`Set not found: ${setId}`);
-    }
+  if (setError || !setData) {
+    throw new Error(`Set not found: ${setId}`);
+  }
 
-    const gameId = setData.games.jt_game_id;
-    const normalizedGameId = normalizeGameSlug(gameId);
-    const setName = setData.name;
-    const expectedTotalCards = setData.total_cards;
+  const gameId = setData.games.jt_game_id;
+  const normalizedGameId = normalizeGameSlug(gameId);
+  const setName = setData.name;
+  const expectedTotalCards = setData.total_cards;
+
+  console.log(`Fetching cards for game: ${gameId} (normalized: ${normalizedGameId}), set: ${setName} (expected: ${expectedTotalCards} cards)`);
+
+  // Check for cancellation before fetching cards
+  if (await shouldCancel()) {
+    console.log(`🛑 Sync cancelled by admin before card fetch for set: ${setId}`);
+    throw new Error('Sync cancelled by admin');
+  }
+
+  // Get all cards for this set using complete pagination
+  console.log(`🃏 Fetching all cards for set: ${setName} in game: ${normalizedGameId}`);
+  console.log(`🔍 Calling listAllCardsBySet with params:`, { gameId: normalizedGameId, setId: setName });
   
-    console.log(`Fetching cards for game: ${gameId} (normalized: ${normalizedGameId}), set: ${setName} (expected: ${expectedTotalCards} cards)`);
-
-    // Check for cancellation before fetching cards
-    if (await shouldCancel()) {
-      console.log(`🛑 Sync cancelled by admin before card fetch for set: ${setId}`);
-      throw new Error('Sync cancelled by admin');
+  // Define outside try so they're available later
+  let allCards: any[] = [];
+  let cardsMeta: any = undefined;
+  try {
+    const cardsResult = await listAllCardsBySet({ 
+      gameId: normalizedGameId, 
+      setId: setName 
+    });
+    // listAllCardsBySet in edge helpers returns a plain array
+    const rawResult: any = cardsResult as any;
+    if (Array.isArray(rawResult)) {
+      allCards = rawResult;
+      cardsMeta = undefined;
+    } else {
+      allCards = rawResult.items || rawResult.data || [];
+      cardsMeta = rawResult.meta || rawResult._metadata;
     }
-
-    // Get all cards for this set using complete pagination
-    console.log(`🃏 Fetching all cards for set: ${setName} in game: ${normalizedGameId}`);
-    console.log(`🔍 Calling listAllCardsBySet with params:`, { gameId: normalizedGameId, setId: setName });
     
-    // Define outside try so they're available later
-    let allCards: any[] = [];
-    let cardsMeta: any = undefined;
-    try {
-      const cardsResult = await listAllCardsBySet({ 
-        gameId: normalizedGameId, 
-        setId: setName 
-      });
-      // listAllCardsBySet in edge helpers returns a plain array
-      const rawResult: any = cardsResult as any;
-      if (Array.isArray(rawResult)) {
-        allCards = rawResult;
-        cardsMeta = undefined;
-      } else {
-        allCards = rawResult.items || rawResult.data || [];
-        cardsMeta = rawResult.meta || rawResult._metadata;
-      }
-      
-      console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
-      console.log(`🔍 cardsResult structure:`, { 
-        isArray: Array.isArray(rawResult),
-        hasItems: !Array.isArray(rawResult) && !!rawResult.items, 
-        itemsLength: !Array.isArray(rawResult) ? rawResult.items?.length : rawResult.length, 
-        hasMeta: !Array.isArray(rawResult) && !!rawResult.meta,
-        rawResultType: typeof rawResult,
-        rawResultKeys: Array.isArray(rawResult) ? ['array'] : Object.keys(rawResult)
-      });
-    } catch (apiError) {
-      console.error(`❌ API call failed:`, apiError);
-      throw new Error(`Failed to fetch cards from JustTCG API: ${apiError.message}`);
-    }
+    console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
+    console.log(`🔍 cardsResult structure:`, { 
+      isArray: Array.isArray(rawResult),
+      hasItems: !Array.isArray(rawResult) && !!rawResult.items, 
+      itemsLength: !Array.isArray(rawResult) ? rawResult.items?.length : rawResult.length, 
+      hasMeta: !Array.isArray(rawResult) && !!rawResult.meta,
+      rawResultType: typeof rawResult,
+      rawResultKeys: Array.isArray(rawResult) ? ['array'] : Object.keys(rawResult)
+    });
+  } catch (apiError) {
+    console.error(`❌ API call failed:`, apiError);
+    throw new Error(`Failed to fetch cards from JustTCG API: ${apiError.message}`);
+  }
 
-    // Check for cancellation after fetching cards
-    if (await shouldCancel()) {
-      console.log(`🛑 Sync cancelled by admin after card fetch for set: ${setId}`);
-      throw new Error('Sync cancelled by admin');
-    }
+  // Check for cancellation after fetching cards
+  if (await shouldCancel()) {
+    console.log(`🛑 Sync cancelled by admin after card fetch for set: ${setId}`);
+    throw new Error('Sync cancelled by admin');
+  }
 
-    // Pokemon Japan empty results guard: Check for English-only sets
-    if (normalizedGameId === 'pokemon-japan' && allCards.length === 0) {
-      console.log(`🔍 Pokemon Japan returned zero cards for set: ${setName}, probing for English-only set...`);
-      
-      const { hasEnglishCards, cardCount } = await probeEnglishOnlySet(setName);
-      
-      if (hasEnglishCards) {
-        const errorMessage = `Set \"${setName}\" appears to be English-only (found ${cardCount}+ cards under 'pokemon' game). This set may not have Japanese cards available. Consider syncing this set under the regular Pokemon game instead of Pokemon Japan.`;
-        
-        console.warn(`⚠️ English-only set detected: ${setName}`);
-        
-        // Update set with specific error status
-        await supabaseClient
-          .from('sets')
-          .update({ 
-            sync_status: 'error',
-            last_sync_error: errorMessage
-          })
-          .eq('jt_set_id', setId);
-        
-        throw new Error(errorMessage);
-      } else {
-        console.log(`❌ Set \"${setName}\" truly has no cards in either pokemon-japan or pokemon games`);
-      }
-    }
-
-    // Per docs: Sealed items are represented as variants (condition: \"Sealed\") on cards.
-    // We intentionally skip separate sealed endpoints and rely solely on the cards endpoint.
-    let allSealed: SealedProduct[] = [];
-    console.log('Skipping sealed endpoint fetch; sealed variants will be captured within card variants.');
+  // Pokemon Japan empty results guard: Check for English-only sets
+  if (normalizedGameId === 'pokemon-japan' && allCards.length === 0) {
+    console.log(`🔍 Pokemon Japan returned zero cards for set: ${setName}, probing for English-only set...`);
     
-    // Log totals for visibility
-    const totalItems = allCards.length;
-    console.log(`Total items from cards endpoint: ${allCards.length}`);
+    const { hasEnglishCards, cardCount } = await probeEnglishOnlySet(setName);
     
-    // Warn if we expected more items (optional informational log)
-    if (expectedTotalCards && totalItems !== expectedTotalCards) {
-      console.warn(`Item count mismatch vs set.total_cards. Expected: ${expectedTotalCards}, From cards: ${totalItems}`);
-    }
-
-    if (allCards.length === 0 && allSealed.length === 0) {
-      console.log('No cards or sealed products found for this set');
+    if (hasEnglishCards) {
+      const errorMessage = `Set \"${setName}\" appears to be English-only (found ${cardCount}+ cards under 'pokemon' game). This set may not have Japanese cards available. Consider syncing this set under the regular Pokemon game instead of Pokemon Japan.`;
       
-      // If we expected cards but got none, mark as error, not completed
-      const syncStatus = expectedTotalCards && expectedTotalCards > 0 ? 'error' : 'completed';
-      const errorMessage = expectedTotalCards && expectedTotalCards > 0 
-        ? `Expected ${expectedTotalCards} cards but found 0. This may indicate an API issue or the set may not be available.`
-        : null;
+      console.warn(`⚠️ English-only set detected: ${setName}`);
       
+      // Update set with specific error status
       await supabaseClient
         .from('sets')
         .update({ 
-          sync_status: syncStatus,
-          cards_synced_count: 0,
-          sealed_synced_count: 0,
-          last_synced_at: new Date().toISOString(),
+          sync_status: 'error',
           last_sync_error: errorMessage
         })
         .eq('jt_set_id', setId);
       
-      return { 
-        setId,
-        totalCards: 0,
-        totalSealed: 0,
-        pricesSynced: 0,
-        message: errorMessage || 'No cards or sealed products found for this set'
-      };
+      throw new Error(errorMessage);
+    } else {
+      console.log(`❌ Set \"${setName}\" truly has no cards in either pokemon-japan or pokemon games`);
     }
-
-    // Check for cancellation before upserting cards
-    if (await shouldCancel()) {
-      console.log(`🛑 Sync cancelled by admin before card upsert for set: ${setId}`);
-      throw new Error('Sync cancelled by admin');
-    }
-
-  // Upsert cards (dedupe by jt_card_id to avoid ON CONFLICT double-update)
-  const cardRecordsRaw = allCards.map(card => ({
-    jt_card_id: (card as any).id || (card as any).card_id,
-    set_id: setData.id,
-    game_id: setData.game_id,
-    name: card.name,
-    number: (card as any).number,
-    rarity: (card as any).rarity,
-    image_url: (card as any).image_url || (card as any).imageUrl,
-    data: card as any // Store full card data as JSONB
-  }));
-
-  const cardMap = new Map<string, any>();
-  for (const rec of cardRecordsRaw) {
-    if (!rec.jt_card_id) continue;
-    cardMap.set(rec.jt_card_id, rec); // last write wins
-  }
-  const cardRecords = Array.from(cardMap.values());
-  if (cardRecords.length !== cardRecordsRaw.length) {
-    console.warn(`🧹 Deduped card records: input=${cardRecordsRaw.length}, unique=${cardRecords.length}`);
   }
 
-  const { data: upsertedCards, error: cardError } = await supabaseClient
-    .from('cards')
-    .upsert(cardRecords, { 
-      onConflict: 'jt_card_id',
-      ignoreDuplicates: false 
-    })
-    .select();
-
-  if (cardError) {
-    console.error('Error upserting cards:', cardError);
-    throw new Error(`Database error: ${cardError.message}`);
-  }
-
-  console.log(`Successfully upserted ${upsertedCards?.length || 0} cards for set: ${setId}`);
-
-  // Update cards synced count immediately after cards upsert
-  await supabaseClient
-    .from('sets')
-    .update({ 
-      cards_synced_count: upsertedCards?.length || 0,
-      last_synced_at: new Date().toISOString()
-    })
-    .eq('jt_set_id', setId);
-
-  // Extract sealed products from card variants
-  allSealed = allCards.reduce((acc: SealedProduct[], card: Card) => {
-    try {
-      if (card.variants && Array.isArray(card.variants)) {
-        card.variants.forEach(variant => {
-          try {
-            // Support both shapes: variant.condition or variant.conditions[]
-            const conditionsArray = (variant as any).conditions as any[] | undefined;
-            if (conditionsArray && Array.isArray(conditionsArray)) {
-              conditionsArray.forEach(condition => {
-                if (condition && condition.condition === 'Sealed') {
-                  const sealedProduct: SealedProduct = {
-                    product_id: (card as any).card_id + '-' + (variant.variant || 'sealed'),
-                    set_id: setData.id,
-                    game_id: setData.game_id,
-                    name: `${card.name} (${variant.variant || 'Sealed'})`,
-                    product_type: variant.variant || 'Sealed',
-                    image_url: (card as any).image_url || (card as any).imageUrl,
-                    variants: [variant]
-                  };
-                  acc.push(sealedProduct);
-                }
-              });
-            } else if ((variant as any).condition === 'Sealed') {
-              const sealedProduct: SealedProduct = {
-                product_id: (card as any).card_id + '-' + (variant.variant || 'sealed'),
-                set_id: setData.id,
-                game_id: setData.game_id,
-                name: `${card.name} (${variant.variant || 'Sealed'})`,
-                product_type: variant.variant || 'Sealed',
-                image_url: (card as any).image_url || (card as any).imageUrl,
-                variants: [variant]
-              };
-              acc.push(sealedProduct);
-            }
-          } catch (variantError) {
-            console.error(`Error processing variant for sealed extraction from card ${card.id}:`, variantError.message);
-          }
-        });
-      }
-    } catch (cardError) {
-      console.error(`Error processing card ${card.id} for sealed extraction:`, cardError.message);
-    }
-    return acc;
-  }, []);
-
-  console.log(`Found ${allSealed.length} sealed products within card variants`);
-
-  // Upsert sealed products (dedupe by jt_product_id)
-  const sealedRecordsRaw = allSealed.map(sealed => ({
-    jt_product_id: sealed.product_id,
-    set_id: setData.id,
-    game_id: setData.game_id,
-    name: sealed.name,
-    product_type: sealed.product_type,
-    image_url: sealed.image_url,
-    data: sealed as any // Store full sealed data as JSONB
-  }));
-
-  const sealedMap = new Map<string, any>();
-  for (const rec of sealedRecordsRaw) {
-    if (!rec.jt_product_id) continue;
-    sealedMap.set(rec.jt_product_id, rec);
-  }
-  const sealedRecords = Array.from(sealedMap.values());
-  if (sealedRecords.length !== sealedRecordsRaw.length) {
-    console.warn(`🧹 Deduped sealed records: input=${sealedRecordsRaw.length}, unique=${sealedRecords.length}`);
-  }
-
-  const { data: upsertedSealed, error: sealedError } = await supabaseClient
-    .from('sealed_products')
-    .upsert(sealedRecords, { 
-      onConflict: 'jt_product_id',
-      ignoreDuplicates: false 
-    })
-    .select();
-
-  if (sealedError) {
-    console.error('Error upserting sealed products:', sealedError);
-    throw new Error(`Database error: ${sealedError.message}`);
-  }
-
-  console.log(`Successfully upserted ${upsertedSealed?.length || 0} sealed products for set: ${setId}`);
-
-  // Update sealed synced count
-  await supabaseClient
-    .from('sets')
-    .update({ 
-      sealed_synced_count: upsertedSealed?.length || 0,
-      last_synced_at: new Date().toISOString()
-    })
-    .eq('jt_set_id', setId);
-
-  // Check for cancellation before pricing sync
-  if (await shouldCancel()) {
-    console.log(`🛑 Sync cancelled by admin before pricing sync for set: ${setId}`);
-    throw new Error('Sync cancelled by admin');
-  }
-
-  // Build a map of JustTCG card IDs to our database card UUIDs for pricing linkage
-  const cardIdMap = new Map();
-  if (upsertedCards) {
-    upsertedCards.forEach(dbCard => {
-      cardIdMap.set(dbCard.jt_card_id, dbCard.id);
-    });
-  }
-
-  // Fetch and store pricing data for all cards in batches
-  console.log(`📊 Processing pricing for ${allCards.length} cards...`);
-  let pricesSynced = 0;
-  const batchSize = 10;
+  // Per docs: Sealed items are represented as variants (condition: \"Sealed\") on cards.
+  // We intentionally skip separate sealed endpoints and rely solely on the cards endpoint.
+  let allSealed: SealedProduct[] = [];
+  console.log('Skipping sealed endpoint fetch; sealed variants will be captured within card variants.');
   
-  for (let i = 0; i < allCards.length; i += batchSize) {
-    const batch = allCards.slice(i, i + batchSize);
-    console.log(`📦 Processing pricing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(allCards.length/batchSize)}`);
+  // Log totals for visibility
+  const totalItems = allCards.length;
+  console.log(`Total items from cards endpoint: ${allCards.length}`);
+  
+  // Warn if we expected more items (optional informational log)
+  if (expectedTotalCards && totalItems !== expectedTotalCards) {
+    console.warn(`Item count mismatch vs set.total_cards. Expected: ${expectedTotalCards}, From cards: ${totalItems}`);
+  }
+
+  if (allCards.length === 0 && allSealed.length === 0) {
+    console.log('No cards or sealed products found for this set');
     
-    for (const card of batch) {
-    const dbCardId = cardIdMap.get(card.id || card.card_id);
-    if (!dbCardId) {
-      console.warn(`No database card ID found for JustTCG card: ${card.id || card.card_id}`);
-      continue;
-    }
-
-    if (card.variants && Array.isArray(card.variants)) {
-      for (const variant of card.variants) {
-        try {
-          // Handle different variant structures
-          if (variant.conditions && Array.isArray(variant.conditions)) {
-            for (const condition of variant.conditions) {
-              const pricingRecord = {
-                card_id: dbCardId,
-                variant: variant.variant || variant.printing || 'Normal',
-                condition: condition.condition,
-                currency: condition.currency || 'USD',
-                market_price: condition.market_price,
-                low_price: condition.low_price,
-                high_price: condition.high_price,
-                source: 'JustTCG',
-                fetched_at: new Date().toISOString()
-              };
-
-              const { error: priceError } = await supabaseClient
-                .from('card_prices')
-                .upsert(pricingRecord, { 
-                  onConflict: 'card_id,variant,condition,source',
-                  ignoreDuplicates: false 
-                });
-
-              if (priceError) {
-                console.error('Error upserting pricing:', priceError);
-              } else {
-                pricesSynced++;
-              }
-            }
-          } else if (variant.condition && variant.price !== undefined) {
-            // Handle direct variant structure (legacy format)
-            const pricingRecord = {
-              card_id: dbCardId,
-              variant: variant.variant || variant.printing || 'Normal',
-              condition: variant.condition,
-              currency: variant.currency || 'USD',
-              market_price: variant.price,
-              low_price: variant.lowPrice,
-              high_price: variant.highPrice,
-              source: 'JustTCG',
-              fetched_at: new Date().toISOString()
-            };
-
-            const { error: priceError } = await supabaseClient
-              .from('card_prices')
-              .upsert(pricingRecord, { 
-                onConflict: 'card_id,variant,condition,source',
-                ignoreDuplicates: false 
-              });
-
-            if (priceError) {
-              console.error('Error upserting pricing:', priceError);
-            } else {
-              pricesSynced++;
-            }
-          }
-        } catch (variantError) {
-          console.error(`Error processing variant for card ${card.id}:`, variantError.message);
-          console.error('Variant structure:', JSON.stringify(variant, null, 2));
-        }
-      }
-    }
+    // If we expected cards but got none, mark as error, not completed
+    const syncStatus = expectedTotalCards && expectedTotalCards > 0 ? 'error' : 'completed';
+    const errorMessage = expectedTotalCards && expectedTotalCards > 0 
+      ? `Expected ${expectedTotalCards} cards but found 0. This may indicate an API issue or the set may not be available.`
+      : null;
     
-    // Update progress every batch (only timestamp, NOT status)
-    if ((i + batchSize) % 50 === 0 || i + batchSize >= allCards.length) {
-      console.log(`📈 Processed pricing for ${Math.min(i + batchSize, allCards.length)}/${allCards.length} cards`);
-      try {
-        await supabaseClient
-          .from('sets')
-          .update({ last_synced_at: new Date().toISOString() })
-          .eq('jt_set_id', setId);
-      } catch (pricingUpdateError) {
-        console.error('Error updating timestamp during pricing:', pricingUpdateError);
-        // Continue with pricing even if timestamp update fails
-      }
-    }
-  }
-
-  // Query the actual count of cards in database to get accurate count
-  const { count: actualDbCount } = await supabaseClient
-    .from('cards')
-    .select('*', { count: 'exact', head: true })
-    .eq('set_id', setData.id);
-  
-  const actualCardsCount = actualDbCount || 0;
-  
-  // Determine sync status based on whether we got all expected cards
-  const isComplete = !expectedTotalCards || actualCardsCount === expectedTotalCards;
-  const syncStatus = isComplete ? 'completed' : 'partial';
-  const syncError = isComplete ? null : `Expected ${expectedTotalCards} cards but only synced ${actualCardsCount}`;
-
-  // FINALIZE SET STATUS IMMEDIATELY after cards/sealed upsert (before pricing)
-  console.log(`🏁 Finalizing sync for set: ${setId} (before pricing)`);
-  await supabaseClient
-    .from('sets')
-    .update({ 
-      sync_status: syncStatus,
-      cards_synced_count: actualCardsCount, // Use actual database count
-      sealed_synced_count: upsertedSealed?.length || 0,
-      last_synced_at: new Date().toISOString(),
-      last_sync_error: syncError
-    })
-    .eq('jt_set_id', setId);
-
-  console.log(`Successfully synced ${upsertedCards?.length || 0} cards, ${upsertedSealed?.length || 0} sealed products. Starting pricing...`);
-  // Final pricing summary (status was already finalized above)
-  console.log(`💰 Completed pricing for ${pricesSynced} variants. Set status: ${syncStatus}`);
-  
-  // Only update last_synced_at and pricing error if any pricing issues occurred
-  if (pricesSynced === 0 && allCards.length > 0) {
     await supabaseClient
       .from('sets')
       .update({ 
+        sync_status: syncStatus,
+        cards_synced_count: 0,
+        sealed_synced_count: 0,
         last_synced_at: new Date().toISOString(),
-        last_sync_error: syncError ? `${syncError}; No pricing data available` : 'No pricing data available'
+        last_sync_error: errorMessage
       })
       .eq('jt_set_id', setId);
+    
+    return { 
+      setId,
+      totalCards: 0,
+      totalSealed: 0,
+      pricesSynced: 0,
+      message: errorMessage || 'No cards or sealed products found for this set'
+    };
   }
 
-  return { 
-    synced: upsertedCards?.length || 0, 
-    cards: upsertedCards, 
-    sealedSynced: upsertedSealed?.length || 0, 
-    sealed: upsertedSealed,
-    pricesSynced,
-    paginationInfo: { 
-      totalFetched: allCards.length, 
-      meta: cardsMeta,
-      stoppedReason: 'completed'
+  // Check for cancellation before upserting cards
+  if (await shouldCancel()) {
+    console.log(`🛑 Sync cancelled by admin before card upsert for set: ${setId}`);
+    throw new Error('Sync cancelled by admin');
+  }
+
+  // Process cards (simplified version - keeping the core logic)
+  const cardRecords = allCards.map((card: any) => ({
+    jt_card_id: card.card_id || card.id?.toString(),
+    set_id: setData.id,
+    game_id: setData.game_id,
+    name: card.name,
+    number: card.number,
+    rarity: card.rarity,
+    image_url: card.image_url,
+    data: card // Store complete card data as JSONB
+  }));
+
+  if (cardRecords.length > 0) {
+    const { data: upsertedCards, error: cardError } = await supabaseClient
+      .from('cards')
+      .upsert(cardRecords, { 
+        onConflict: 'jt_card_id',
+        ignoreDuplicates: false 
+      })
+      .select();
+
+    if (cardError) {
+      console.error('Error upserting cards:', cardError);
+      throw new Error(`Database error: ${cardError.message}`);
     }
+
+    console.log(`Successfully upserted ${upsertedCards?.length || 0} cards`);
+  }
+
+  // Update set status to completed
+  await supabaseClient
+    .from('sets')
+    .update({ 
+      sync_status: 'completed',
+      cards_synced_count: cardRecords.length,
+      sealed_synced_count: allSealed.length,
+      last_synced_at: new Date().toISOString(),
+      last_sync_error: null
+    })
+    .eq('jt_set_id', setId);
+
+  console.log(`Card sync completed for set: ${setId}`);
+  return { 
+    setId,
+    synced: cardRecords.length,
+    totalCards: allCards.length,
+    totalSealed: allSealed.length,
+    totalFetched: allCards.length, 
+    meta: cardsMeta,
+    stoppedReason: 'completed'
   };
 }
 
@@ -859,3 +592,5 @@ async function syncCardsBulk(supabaseClient: any, setIds: string[], operationId?
     results 
   };
 }
+
+Deno.serve(handleRequest);
