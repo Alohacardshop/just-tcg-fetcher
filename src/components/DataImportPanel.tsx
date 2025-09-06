@@ -347,6 +347,13 @@ export const DataImportPanel = () => {
               title: "Sync Completed",
               description: `${updatedSet.name} sync finished successfully`,
             });
+          } else if (updatedSet.sync_status === 'partial' && payload.old?.sync_status === 'syncing') {
+            toast({
+              title: "Sync Partial",
+              description: `${updatedSet.name} sync partially completed: ${updatedSet.last_sync_error || 'Incomplete data'}`,
+              variant: "default",
+              className: "border-yellow-500 bg-yellow-50 text-yellow-900",
+            });
           } else if (updatedSet.sync_status === 'error' && payload.old?.sync_status === 'syncing') {
             toast({
               title: "Sync Failed",

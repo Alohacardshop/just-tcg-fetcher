@@ -407,19 +407,30 @@ async function syncCards(supabaseClient: any, setId: string) {
     if (allCards.length === 0 && allSealed.length === 0) {
       console.log('No cards or sealed products found for this set');
       
-      // For pokemon-japan, this should have been caught by the guard above
-      // For other games, this is a normal empty set
+      // If we expected cards but got none, mark as error, not completed
+      const syncStatus = expectedTotalCards && expectedTotalCards > 0 ? 'error' : 'completed';
+      const errorMessage = expectedTotalCards && expectedTotalCards > 0 
+        ? `Expected ${expectedTotalCards} cards but found 0. This may indicate an API issue or the set may not be available.`
+        : null;
+      
       await supabaseClient
         .from('sets')
         .update({ 
-          sync_status: 'completed',
+          sync_status: syncStatus,
           cards_synced_count: 0,
           sealed_synced_count: 0,
           last_synced_at: new Date().toISOString(),
-          last_sync_error: null
+          last_sync_error: errorMessage
         })
         .eq('jt_set_id', setId);
-      return { synced: 0, cards: [], sealedSynced: 0, pricesSynced: 0 };
+      
+      return { 
+        setId,
+        totalCards: 0,
+        totalSealed: 0,
+        pricesSynced: 0,
+        message: errorMessage || 'No cards or sealed products found for this set'
+      };
     }
 
     // Check for cancellation before upserting cards
@@ -559,17 +570,25 @@ async function syncCards(supabaseClient: any, setId: string) {
     }
   }
 
+  // Query the actual count of cards in database to get accurate count
+  const { count: actualDbCount } = await supabaseClient
+    .from('cards')
+    .select('*', { count: 'exact', head: true })
+    .eq('set_id', dbSetId);
+  
+  const actualCardsCount = actualDbCount || 0;
+  
   // Determine sync status based on whether we got all expected cards
-  const isComplete = !expectedTotalCards || allCards.length === expectedTotalCards;
+  const isComplete = !expectedTotalCards || actualCardsCount === expectedTotalCards;
   const syncStatus = isComplete ? 'completed' : 'partial';
-  const syncError = isComplete ? null : `Expected ${expectedTotalCards} cards but only fetched ${allCards.length}`;
+  const syncError = isComplete ? null : `Expected ${expectedTotalCards} cards but only synced ${actualCardsCount}`;
 
   // Update set with sync completion status and counts
   await supabaseClient
     .from('sets')
     .update({ 
       sync_status: syncStatus,
-      cards_synced_count: allCards.length, // Count all fetched cards, not just upserted
+      cards_synced_count: actualCardsCount, // Use actual database count
       sealed_synced_count: upsertedSealed?.length || 0,
       last_synced_at: new Date().toISOString(),
       last_sync_error: syncError
