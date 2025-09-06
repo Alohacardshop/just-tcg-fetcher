@@ -346,7 +346,9 @@ async function syncCards(supabaseClient: any, setId: string) {
     }
 
     // Get all cards for this set using complete pagination
-    console.log(`🃏 Fetching all cards for set: ${setId} in game: ${gameId}`);
+    console.log(`🃏 Fetching all cards for set: ${setName} in game: ${normalizedGameId}`);
+    console.log(`🔍 Calling listAllCardsBySet with params:`, { gameId: normalizedGameId, setId: setName });
+    
     const cardsResult = await listAllCardsBySet({ 
       gameId: normalizedGameId, 
       setId: setName 
@@ -357,6 +359,13 @@ async function syncCards(supabaseClient: any, setId: string) {
     const cardsMeta = cardsResult.meta;
     
     console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
+    console.log(`🔍 cardsResult structure:`, { 
+      hasItems: !!cardsResult.items, 
+      itemsLength: cardsResult.items?.length, 
+      hasMeta: !!cardsResult.meta,
+      rawResultType: typeof cardsResult,
+      rawResultKeys: Object.keys(cardsResult)
+    });
 
     // Check for cancellation after fetching cards
     if (await shouldCancel()) {
