@@ -150,24 +150,23 @@ export class JustTCGClient {
   }
 
   /**
-   * Resolve the appropriate set identifier for JustTCG API
-   * Prefers 'code' over 'setId' for better API compatibility
+   * Enhanced set resolution: DB code → JustTCG API fallback → retry logic
    */
-  async resolveSetIdentifier(gameId: string, setId: string): Promise<string> {
-    try {
-      console.log(`🔍 Resolving set identifier for ${gameId}/${setId}`);
+  async resolveSetCode(gameSlug: string, setId: string): Promise<{ code: string; source: string }> {
+    console.log(`🔍 Resolving set code for game=${gameSlug}, setId=${setId}`);
 
-      // If setId already looks like a short code (e.g., "10e"), keep it
-      const looksLikeCode = setId && setId.length <= 6 && !setId.includes(' ');
+    try {
+      // 1. Check if setId already looks like a short code (e.g., "10e", "som")
+      const looksLikeCode = setId && setId.length <= 6 && !setId.includes(' ') && !/^[A-Z]/.test(setId);
       if (looksLikeCode) {
-        console.log(`✔️ setId already looks like a code: ${setId}`);
-        return setId;
+        console.log(`✅ setId already looks like a code: ${setId}`);
+        return { code: setId, source: 'direct-code' };
       }
 
+      // 2. Try to get code from our database first
       const supabaseUrl = Deno.env.get('SUPABASE_URL');
       const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-      // 1) Try DB first (our "sets" table)
       if (supabaseUrl && supabaseKey) {
         const supabase = createClient(supabaseUrl, supabaseKey);
         const { data: setData } = await supabase
@@ -177,104 +176,157 @@ export class JustTCGClient {
           .maybeSingle();
 
         if (setData?.code) {
-          console.log(`✅ Using set code from DB: ${setData.code} (for ${setId})`);
-          return setData.code;
+          console.log(`✅ Found code in DB: ${setData.code} for setId=${setId}`);
+          return { code: setData.code, source: 'db-code' };
         }
+
+        console.log(`📝 No code in DB for setId=${setId}, trying JustTCG API lookup`);
       }
 
-      // 2) Fallback: query JustTCG /sets to discover the code
-      const normalizedGame = normalizeGameSlug(gameId);
-      const pageSize = 200;
-      let offset = 0;
-      let page = 0;
+      // 3. Fallback: Query JustTCG /sets to find the code by name matching
+      const normalizedGame = normalizeGameSlug(gameSlug);
+      console.log(`🔎 Searching JustTCG /sets for game=${normalizedGame}, setName=${setId}`);
 
-      while (page < 10) { // safety cap
-        page++;
-        const url = buildUrl('sets', { game: normalizedGame, limit: pageSize, offset });
-        const response = await fetchJsonWithRetry(url);
-        const items = (response?.data || response?.sets || response?.items || []) as any[];
-        if (!Array.isArray(items) || items.length === 0) {
-          break;
-        }
+      const searchTerms = [setId.toLowerCase().trim()];
+      // Add common variations for Magic sets
+      if (setId.includes('Edition')) {
+        searchTerms.push(setId.replace(' Edition', '').toLowerCase().trim());
+      }
 
-        const needle = (setId || '').toLowerCase().trim();
-        for (const s of items) {
-          const cand = [s?.id, s?.name, s?.code, s?.slug, s?.provider_id]
-            .filter(Boolean)
-            .map((v: string) => String(v).toLowerCase().trim());
+      for (const searchTerm of searchTerms) {
+        let offset = 0;
+        const pageSize = 200;
+        let page = 0;
 
-          if (cand.includes(needle)) {
-            const candidateCode = s?.code || s?.id;
-            if (candidateCode) {
-              console.log(`🔎 Found code via API for "${setId}": ${candidateCode}`);
-              return String(candidateCode);
+        while (page < 10) { // safety cap
+          page++;
+          const url = buildUrl('sets', { game: normalizedGame, limit: pageSize, offset });
+          console.log(`🔎 JustTCG sets lookup attempt ${page}: ${url}`);
+          
+          const response = await fetchJsonWithRetry(url);
+          const items = (response?.data || response?.sets || response?.items || []) as any[];
+          
+          if (!Array.isArray(items) || items.length === 0) {
+            console.log(`📭 No more sets found at page ${page}`);
+            break;
+          }
+
+          console.log(`📋 Checking ${items.length} sets for match with: ${searchTerm}`);
+
+          for (const set of items) {
+            const candidateFields = [
+              set?.id, 
+              set?.name, 
+              set?.code, 
+              set?.slug, 
+              set?.provider_id,
+              set?.tcgplayer_id
+            ].filter(Boolean).map((v: string) => String(v).toLowerCase().trim());
+
+            if (candidateFields.includes(searchTerm)) {
+              const foundCode = set?.code || set?.id || set?.provider_id;
+              if (foundCode) {
+                console.log(`🎯 Found matching set via JustTCG API: "${setId}" → code="${foundCode}"`);
+                console.log(`📊 Match details:`, { name: set?.name, code: set?.code, id: set?.id });
+                return { code: String(foundCode), source: 'justtcg-api' };
+              }
             }
           }
-        }
 
-        // Continue pagination
-        offset += pageSize;
-        if (items.length < pageSize) break;
+          // Continue pagination
+          offset += pageSize;
+          if (items.length < pageSize) {
+            console.log(`📄 Last page reached (${items.length} < ${pageSize})`);
+            break;
+          }
+        }
       }
 
-      console.log(`📝 No code found via DB or API, using original setId: ${setId}`);
-      return setId;
+      console.log(`⚠️ No code found via DB or API, using original setId: ${setId}`);
+      return { code: setId, source: 'fallback-original' };
+
     } catch (error: any) {
-      console.warn(`⚠️ Error resolving set identifier, using original: ${setId}`, error?.message || error);
-      return setId;
+      console.warn(`⚠️ Error in set resolution, using original setId: ${setId}`, error?.message || error);
+      return { code: setId, source: 'error-fallback' };
     }
   }
 
   /**
-   * Generator function that yields card pages as arrays only
-   * Never yields undefined/null - always returns empty array on error
-   * ===== C. NORMALIZE ITERATOR OUTPUT =====
+   * Enhanced cards fetching with proper set code resolution
+   * Supports both limit/offset and page/pageSize pagination
    */
   async* getCards(gameId: string, setId: string, pageSize = 100): AsyncGenerator<any[], void, unknown> {
-    console.log(`🃏 Starting JustTCGClient.getCards for ${gameId}/${setId} (pageSize: ${pageSize})`);
+    console.log(`🃏 Starting enhanced JustTCGClient.getCards for ${gameId}/${setId} (pageSize: ${pageSize})`);
     
     const normalizedGameId = normalizeGameSlug(gameId);
     
-    // Resolve the appropriate set identifier (prefer code over setId)
-    const resolvedSetId = await this.resolveSetIdentifier(gameId, setId);
-    console.log(`🎯 Using resolved set identifier: ${resolvedSetId} for cards API`);
+    // Enhanced set resolution
+    const { code: resolvedSetCode, source } = await this.resolveSetCode(gameId, setId);
+    console.log(`🎯 Set resolution: "${setId}" → "${resolvedSetCode}" (source: ${source})`);
     
     let offset = 0;
+    let page = 1; // Start with page 1 for page-based pagination
     let hasMore = true;
     let pageCount = 0;
     let expectedTotal: number | null = null;
+    let paginationMode: 'offset' | 'page' = 'offset'; // Default to offset, switch if needed
     
     while (hasMore) {
       pageCount++;
       const startTime = Date.now();
       
       try {
-        console.log(`📄 JustTCGClient fetching page ${pageCount} (offset: ${offset}, limit: ${pageSize})`);
+        console.log(`📄 JustTCGClient fetching page ${pageCount} (${paginationMode} mode)`);
         
-        // Build query parameters with resolved set identifier
-        const params: Record<string, string | number> = {
-          game: normalizedGameId,
-          set: resolvedSetId,
-          limit: pageSize,
-          offset: offset
-        };
+        // Try both pagination modes - start with limit/offset, fallback to page/pageSize
+        let params: Record<string, string | number>;
+        let url: string;
         
-        const url = buildUrl('cards', params);
+        if (paginationMode === 'offset') {
+          params = {
+            game: normalizedGameId,
+            set: resolvedSetCode,
+            limit: pageSize,
+            offset: offset
+          };
+          url = buildUrl('cards', params);
+          console.log(`📡 API call (offset mode): ${url}`);
+        } else {
+          params = {
+            game: normalizedGameId,
+            set: resolvedSetCode,
+            pageSize: pageSize,
+            page: page
+          };
+          url = buildUrl('cards', params);
+          console.log(`📡 API call (page mode): ${url}`);
+        }
+        
         const response = await fetchJsonWithRetry(url);
         const duration = Date.now() - startTime;
         
-        // ===== C. DEFENSIVE GUARDS FOR RESPONSE DATA =====
-        // Extract data with defensive guards - always ensure arrays
+        console.log(`📊 API Response (${duration}ms):`, {
+          hasData: !!response?.data,
+          dataLength: Array.isArray(response?.data) ? response.data.length : 'not array',
+          hasMeta: !!response?.meta,
+          status: response?.status || 'unknown'
+        });
+        
+        // Extract data with defensive guards
         let pageData: any[] = [];
         if (response && typeof response === 'object') {
           const rawData = response.data || response.cards || response.items || [];
           pageData = Array.isArray(rawData) ? rawData : [];
-        } else {
-          console.warn(`⚠️ JustTCGClient received non-object response on page ${pageCount}, treating as empty`);
-          pageData = [];
         }
         
-        // Extract metadata with defensive guards
+        // If first attempt with offset fails and returns 0 cards, try page mode
+        if (pageCount === 1 && pageData.length === 0 && paginationMode === 'offset') {
+          console.log(`🔄 No cards with offset mode, trying page/pageSize mode`);
+          paginationMode = 'page';
+          continue; // Retry with page mode
+        }
+        
+        // Extract metadata
         const meta = (response && typeof response === 'object') 
           ? (response.meta || response._metadata || {}) 
           : {};
@@ -282,41 +334,45 @@ export class JustTCGClient {
         // Store expected total from first page
         if (pageCount === 1 && typeof meta.total === 'number') {
           expectedTotal = meta.total;
-          console.log(`📊 JustTCGClient expected total cards: ${expectedTotal}`);
+          console.log(`📊 Expected total cards: ${expectedTotal}`);
         }
         
-        console.log(`✅ JustTCGClient page ${pageCount} fetched: ${pageData.length} cards (${duration}ms)`);
-        console.log(`📈 JustTCGClient meta - hasMore: ${meta.hasMore}, total: ${meta.total}, offset: ${meta.offset}`);
+        console.log(`✅ Page ${pageCount} processed: ${pageData.length} cards (${duration}ms)`);
+        console.log(`📈 Pagination meta:`, { hasMore: meta.hasMore, total: meta.total, currentPage: paginationMode === 'page' ? page : Math.floor(offset / pageSize) + 1 });
         
         // Always yield an array, even if empty
         yield pageData;
         
         // Check for end conditions
         if (pageData.length === 0) {
-          console.log(`📭 JustTCGClient empty page received, stopping pagination`);
+          console.log(`📭 Empty page received, stopping pagination`);
           break;
         }
         
         // Check meta.hasMore first (most reliable)
         if (meta.hasMore === false) {
-          console.log(`🏁 JustTCGClient meta.hasMore === false, pagination complete`);
+          console.log(`🏁 meta.hasMore === false, pagination complete`);
           hasMore = false;
           break;
         }
         
         // Fallback: if we got fewer items than requested, assume we're done
         if (pageData.length < pageSize) {
-          console.log(`🏁 JustTCGClient partial page (${pageData.length}/${pageSize}), assuming end of data`);
+          console.log(`🏁 Partial page (${pageData.length}/${pageSize}), assuming end of data`);
           hasMore = false;
           break;
         }
         
-        // Update offset for next page
-        offset += pageData.length;
+        // Update pagination parameters
+        if (paginationMode === 'offset') {
+          offset += pageData.length;
+        } else {
+          page += 1;
+        }
         
         // Safety check: prevent infinite loops
         if (pageCount > 1000) {
-          console.warn(`⚠️ JustTCGClient safety break: too many pages (${pageCount}), stopping`);
+          console.warn(`⚠️ Safety break: too many pages (${pageCount}), stopping`);
           break;
         }
         
@@ -324,28 +380,30 @@ export class JustTCGClient {
         const duration = Date.now() - startTime;
         console.error(`❌ JustTCGClient error fetching page ${pageCount} (${duration}ms):`, error.message || error);
         
-        // ===== C. ON ERROR, YIELD EMPTY ARRAY AND LOG CONTEXT =====
-        console.error(`🔍 JustTCGClient error context: gameId=${gameId}, setId=${setId}, page=${pageCount}, offset=${offset}`);
+        console.error(`🔍 Error context: gameId=${gameId}, setId=${setId}, resolvedCode=${resolvedSetCode}, page=${pageCount}`);
         
-        // For transient errors, try to continue after yielding empty array
-        if (pageCount === 1) {
-          // If first page fails, stop completely
-          console.error(`❌ JustTCGClient first page failed, stopping pagination`);
-          yield [];
-          break;
-        } else {
-          // For subsequent pages, yield empty and continue with backoff
-          console.warn(`⚠️ JustTCGClient page ${pageCount} failed, yielding empty array and stopping pagination`);
-          yield [];
-          break;
+        // For first page errors, try switching pagination mode once
+        if (pageCount === 1 && paginationMode === 'offset') {
+          console.log(`🔄 First page failed with offset, trying page mode`);
+          paginationMode = 'page';
+          continue;
         }
+        
+        // For transient errors, yield empty and stop
+        console.error(`❌ JustTCGClient stopping pagination due to error`);
+        yield [];
+        break;
       }
     }
     
-    console.log(`📊 JustTCGClient pagination complete for ${gameId}/${setId}:`);
+    console.log(`📊 JustTCGClient pagination complete:`);
+    console.log(`   Game: ${gameId} → ${normalizedGameId}`);
+    console.log(`   Set: ${setId} → ${resolvedSetCode} (${source})`);
     console.log(`   Pages processed: ${pageCount}`);
     console.log(`   Expected total: ${expectedTotal || 'unknown'}`);
+    console.log(`   Pagination mode: ${paginationMode}`);
   }
+}
 }
 
 // ===== SYNC MANAGER =====
@@ -589,35 +647,49 @@ async function routeRequest(req: Request): Promise<Response> {
     const supa = createClient(supabaseUrl, supabaseKey);
     const syncManager = new SyncManager(supa);
 
-    // ---- resolve set: provider_id or name fallback (helps Magic like "10th Edition") ----
+    console.log(`🔍 Enhanced set resolution for game="${rawGame}" → "${normalizedGame}", setId="${rawSet}"`);
+
+    // ---- Enhanced set resolution with comprehensive fallback ----
     const setKey = rawSet.toLowerCase();
+    
+    // First try exact jt_set_id match
     let { data: setRow, error: setErr } = await supa
       .from('sets')
       .select('id, jt_set_id, name, game_id, code')
       .eq('jt_set_id', setKey)
       .maybeSingle();
 
+    console.log(`📊 DB lookup by jt_set_id="${setKey}":`, setRow ? 'found' : 'not found');
+
     if (!setRow) {
-      // try common fallbacks: exact name, code column if you have it
+      // Try case-insensitive name matching
       const { data: guess } = await supa
         .from('sets')
         .select('id, jt_set_id, name, game_id, code')
-        .ilike('name', setKey)           // "10th Edition"
+        .ilike('name', setKey)
         .maybeSingle();
 
+      console.log(`📊 DB lookup by name="${setKey}":`, guess ? 'found' : 'not found');
       setRow = guess ?? null;
     }
 
     if (!setRow) {
       return new Response(JSON.stringify({
         code: 'SET_NOT_FOUND',
-        message: `Set not found for game=${normalizedGame}. Send setId=provider_id (e.g., "10e"), or exact set name.`,
+        message: `Set not found in database. Searched for: jt_set_id="${setKey}" and name ilike "${setKey}". Available sets can be synced via 'Sync Sets' first.`,
         received: { game: normalizedGame, setId: rawSet }
       }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // use jt_set_id from sets table to drive the sync
+    // Use jt_set_id from sets table - the JustTCGClient will resolve this to proper code
     const resolvedSetId = setRow.jt_set_id;
+    const dbCode = setRow.code;
+    
+    console.log(`✅ Set resolved: "${rawSet}" → jt_set_id="${resolvedSetId}", db_code="${dbCode || 'null'}"`);
+    console.log(`🎯 Will use enhanced resolution in JustTCGClient.getCards()`);
+
+    // background by default if requested
+    const isBg = Boolean(body.background);
 
     // background by default if requested
     const isBg = Boolean(body.background);
