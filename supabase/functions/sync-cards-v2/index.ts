@@ -1175,13 +1175,25 @@ async function syncCardsV2(
 
     // Final validation and status update with defensive guards
     const finalProcessedCount = processedCards?.length ?? 0;
+    const expectedTotal = typeof totalCards === 'number' ? totalCards : 0;
+    
+    // Determine if we got most of the expected cards (allow some tolerance for API differences)
+    const completionPercentage = expectedTotal > 0 ? (finalProcessedCount / expectedTotal) * 100 : 0;
+    const isPartialSync = completionPercentage > 0 && completionPercentage < 95; // Less than 95% considered partial
     const wasSuccessful = finalProcessedCount > 0;
     
     if (wasSuccessful) {
-      await syncManager.updateSetStatus(setId, 'completed', undefined, {
+      const syncStatus = isPartialSync ? 'partial' : 'completed';
+      const statusMessage = isPartialSync 
+        ? `Partial sync: ${finalProcessedCount}/${expectedTotal} cards (${completionPercentage.toFixed(1)}%)`
+        : undefined;
+        
+      await syncManager.updateSetStatus(setId, syncStatus, statusMessage, {
         totalProcessed: finalProcessedCount,
         pagesProcessed
       });
+      
+      console.log(`📊 Sync result: ${finalProcessedCount}/${expectedTotal} cards (${completionPercentage.toFixed(1)}%) - Status: ${syncStatus}`);
     } else {
       const errorMsg = 'No cards were processed successfully';
       await syncManager.updateSetStatus(setId, 'error', errorMsg);
