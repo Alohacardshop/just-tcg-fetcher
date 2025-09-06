@@ -462,17 +462,27 @@ async function syncCards(supabaseClient: any, setId: string) {
       throw new Error('Sync cancelled by admin');
     }
 
-  // Upsert cards
-  const cardRecords = allCards.map(card => ({
-    jt_card_id: card.id || card.card_id,
+  // Upsert cards (dedupe by jt_card_id to avoid ON CONFLICT double-update)
+  const cardRecordsRaw = allCards.map(card => ({
+    jt_card_id: (card as any).id || (card as any).card_id,
     set_id: setData.id,
     game_id: setData.game_id,
     name: card.name,
-    number: card.number,
-    rarity: card.rarity,
-    image_url: card.image_url || card.imageUrl,
+    number: (card as any).number,
+    rarity: (card as any).rarity,
+    image_url: (card as any).image_url || (card as any).imageUrl,
     data: card as any // Store full card data as JSONB
   }));
+
+  const cardMap = new Map<string, any>();
+  for (const rec of cardRecordsRaw) {
+    if (!rec.jt_card_id) continue;
+    cardMap.set(rec.jt_card_id, rec); // last write wins
+  }
+  const cardRecords = Array.from(cardMap.values());
+  if (cardRecords.length !== cardRecordsRaw.length) {
+    console.warn(`🧹 Deduped card records: input=${cardRecordsRaw.length}, unique=${cardRecords.length}`);
+  }
 
   const { data: upsertedCards, error: cardError } = await supabaseClient
     .from('cards')
@@ -535,8 +545,8 @@ async function syncCards(supabaseClient: any, setId: string) {
 
   console.log(`Found ${allSealed.length} sealed products within card variants`);
 
-  // Upsert sealed products
-  const sealedRecords = allSealed.map(sealed => ({
+  // Upsert sealed products (dedupe by jt_product_id)
+  const sealedRecordsRaw = allSealed.map(sealed => ({
     jt_product_id: sealed.product_id,
     set_id: setData.id,
     game_id: setData.game_id,
@@ -545,6 +555,16 @@ async function syncCards(supabaseClient: any, setId: string) {
     image_url: sealed.image_url,
     data: sealed as any // Store full sealed data as JSONB
   }));
+
+  const sealedMap = new Map<string, any>();
+  for (const rec of sealedRecordsRaw) {
+    if (!rec.jt_product_id) continue;
+    sealedMap.set(rec.jt_product_id, rec);
+  }
+  const sealedRecords = Array.from(sealedMap.values());
+  if (sealedRecords.length !== sealedRecordsRaw.length) {
+    console.warn(`🧹 Deduped sealed records: input=${sealedRecordsRaw.length}, unique=${sealedRecords.length}`);
+  }
 
   const { data: upsertedSealed, error: sealedError } = await supabaseClient
     .from('sealed_products')
