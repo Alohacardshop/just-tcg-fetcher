@@ -701,9 +701,9 @@ export const DataImportPanel = () => {
     setImportProgress(0);
     
     try {
-      console.log('🧪 Invoking sync-cards-v2 with payload:', { setId, gameId, background: true });
+      console.log('🧪 Invoking sync-cards-v2 with payload:', { setId, gameId, game: gameId, background: true });
       const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
-        body: { setId, gameId, background: true }
+        body: { setId, gameId, game: gameId, background: true }
       });
 
       if (error) throw error;
@@ -803,13 +803,13 @@ export const DataImportPanel = () => {
         const promises = batch.map(async (setId) => {
           if (bulkCancelRequested) return { success: false, setId };
           
-          try {
-            const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
-              body: { setId, gameId, background: true },
-              headers: {
-                'Content-Type': 'application/json'
-              }
-            });
+            try {
+              // Map internal game UUID to JT slug for the API
+              const jtGameId = games.find(g => g.id === gameId)?.jt_game_id;
+              console.log('📦 Bulk invoking sync-cards-v2:', { setId, gameId: jtGameId, game: jtGameId, background: true });
+              const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
+                body: { setId, gameId: jtGameId, game: jtGameId, background: true }
+              });
 
             if (error) {
               console.error(`Error syncing set ${setId}:`, error);
