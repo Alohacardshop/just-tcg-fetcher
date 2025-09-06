@@ -544,138 +544,100 @@ function handleCors(req: Request): Response | null {
 }
 
 interface SyncCardsRequest {
-  setId: string;
+  setId?: string;
+  game?: string;
   gameId?: string;
   operationId?: string;
   background?: boolean;
 }
 
 async function routeRequest(req: Request): Promise<Response> {
-  // Handle CORS
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  // Only allow POST requests
-  if (req.method !== 'POST') {
-    return new Response(
-      JSON.stringify({ error: 'Method not allowed' }),
-      { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-  }
+  const pre = handleCors(req); if (pre) return pre;
+  if (req.method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   try {
-    // Parse request body with defensive guards
-    let requestData: SyncCardsRequest;
-    try {
-      const body = await req.text();
-      console.log('📦 Raw request body:', typeof body, 'len=', body?.length, 'preview=', body?.slice(0, 200));
-      requestData = body ? JSON.parse(body) : {};
-    } catch (parseError) {
-      console.error('❌ JSON parse error in sync-cards-v2 routeRequest:', parseError);
-      return new Response(
-        JSON.stringify({ error: 'Invalid JSON in request body' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    let bodyText = await req.text();
+    console.log('📦 raw body:', bodyText?.slice(0, 200));
+    const body = (bodyText ? JSON.parse(bodyText) : {}) as SyncCardsRequest;
+
+    // Accept game or gameId; normalize slugs (mtg -> magic)
+    const rawGame = (body.game ?? body.gameId ?? '').toString().trim().toLowerCase();
+    const normalizedGame = normalizeGameSlug(rawGame); // maps mtg, magic-the-gathering -> magic
+    const rawSet = (body.setId ?? '').toString().trim();
+
+    if (!rawSet) {
+      return new Response(JSON.stringify({ code: 'MISSING_SET_ID', message: 'setId is required (provider id or set name)' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    if (!normalizedGame) {
+      return new Response(JSON.stringify({ code: 'MISSING_GAME', message: 'game is required (e.g., "magic", "pokemon")' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Validate required parameters with defensive guards
-    const setId = typeof requestData.setId === 'string' ? requestData.setId.trim() : '';
-    const gameParam = requestData.game || requestData.gameId; // Accept either 'game' or 'gameId'
-    const gameId = typeof gameParam === 'string' ? gameParam.trim() : '';
-    const operationId = typeof requestData.operationId === 'string' ? requestData.operationId : undefined;
-    const isBackground = Boolean(requestData.background);
-
-    console.log('📥 sync-cards-v2 request:', { setId, gameId, operationId, isBackground });
-
-    if (!setId) {
-      console.error('❌ Missing setId parameter');
-      return new Response(
-        JSON.stringify({ 
-          error: 'MISSING_SET_ID', 
-          message: 'setId is required',
-          code: 400
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // gameId is optional; if omitted, syncCardsV2 will derive it from DB
-    console.log('📥 sync-cards-v2 parsed:', { setId, gameId: gameId || 'will derive from DB', operationId, isBackground });
-
-    // Verify environment variables
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    const justTcgApiKey = Deno.env.get('JUSTTCG_API_KEY');
-
-    if (!supabaseUrl || !supabaseServiceKey) {
-      console.error('❌ Missing Supabase environment variables');
-      return new Response(
-        JSON.stringify({ 
-          error: 'MISSING_SUPABASE_CONFIG', 
-          message: 'Supabase configuration is incomplete',
-          code: 500
-        }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const justKey = Deno.env.get('JUSTTCG_API_KEY');
+    if (!supabaseUrl || !supabaseKey) {
+      return new Response(JSON.stringify({ code: 'MISSING_SUPABASE_CONFIG', message: 'Supabase config missing' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    if (!justKey) {
+      return new Response(JSON.stringify({ code: 'MISSING_API_KEY', message: 'JUSTTCG_API_KEY missing' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    if (!justTcgApiKey) {
-      console.error('❌ Missing JUSTTCG_API_KEY environment variable');
-      return new Response(
-        JSON.stringify({ 
-          error: 'MISSING_API_KEY', 
-          message: 'JustTCG API key is not configured',
-          code: 500
-        }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
+    const supa = createClient(supabaseUrl, supabaseKey);
+    const syncManager = new SyncManager(supa);
+
+    // ---- resolve set: provider_id or name fallback (helps Magic like "10th Edition") ----
+    const setKey = rawSet.toLowerCase();
+    let { data: setRow, error: setErr } = await supa
+      .from('sets')
+      .select('id, jt_set_id, name, game_id, code')
+      .eq('jt_set_id', setKey)
+      .maybeSingle();
+
+    if (!setRow) {
+      // try common fallbacks: exact name, code column if you have it
+      const { data: guess } = await supa
+        .from('sets')
+        .select('id, jt_set_id, name, game_id, code')
+        .ilike('name', setKey)           // "10th Edition"
+        .maybeSingle();
+
+      setRow = guess ?? null;
     }
 
-    console.log(`🚀 Starting sync-cards-v2 for setId: ${setId}, operationId: ${operationId || 'none'}, background: ${isBackground}`);
+    if (!setRow) {
+      return new Response(JSON.stringify({
+        code: 'SET_NOT_FOUND',
+        message: `Set not found for game=${normalizedGame}. Send setId=provider_id (e.g., "10e"), or exact set name.`,
+        received: { game: normalizedGame, setId: rawSet }
+      }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
-    // Initialize Supabase client
-    const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
+    // use jt_set_id from sets table to drive the sync
+    const resolvedSetId = setRow.jt_set_id;
 
-    // Initialize sync manager and client
-    const syncManager = new SyncManager(supabaseClient);
-    const justTCGClient = new JustTCGClient();
-
-    // For background sync, return immediately and continue processing
-    if (isBackground) {
-      // Use EdgeRuntime.waitUntil if available, otherwise process synchronously
+    // background by default if requested
+    const isBg = Boolean(body.background);
+    if (isBg) {
+      // @ts-ignore EdgeRuntime may not exist in types
       if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
-        EdgeRuntime.waitUntil(syncCardsV2(supabaseClient, syncManager, setId, operationId, gameId));
+        EdgeRuntime.waitUntil(syncCardsV2(supa, syncManager, resolvedSetId, body.operationId, normalizedGame));
       } else {
-        // Fallback: start async processing
-        syncCardsV2(supabaseClient, syncManager, setId, operationId, gameId).catch(error => {
-          console.error('Background sync failed:', error);
-        });
+        syncCardsV2(supa, syncManager, resolvedSetId, body.operationId, normalizedGame).catch(e => console.error('bg sync failed', e));
       }
-      
-      return new Response(
-        JSON.stringify({ started: true, setId, operationId }),
-        { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return new Response(JSON.stringify({ started: true, setId: resolvedSetId }), { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Synchronous processing
-    const result = await syncCardsV2(supabaseClient, syncManager, setId, operationId, gameId);
-    
-    return new Response(
-      JSON.stringify(result),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    const result = await syncCardsV2(supa, new SyncManager(supa), resolvedSetId, body.operationId, normalizedGame);
+    return new Response(JSON.stringify(result), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-  } catch (error) {
-    console.error('❌ Error in sync-cards-v2:', error);
-    
-    return new Response(
-      JSON.stringify({ 
-        error: 'Internal server error', 
-        message: typeof error?.message === 'string' ? error.message : 'Unknown error'
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+  } catch (e: any) {
+    console.error('sync-cards-v2 top-level error:', e);
+    return new Response(JSON.stringify({ code: 'UNHANDLED', message: e?.message ?? 'Unknown error' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 }
 
