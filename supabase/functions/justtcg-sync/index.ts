@@ -485,20 +485,35 @@ async function syncCards(supabaseClient: any, setId: string) {
   allSealed = allCards.reduce((acc: SealedProduct[], card: Card) => {
     if (card.variants) {
       card.variants.forEach(variant => {
-        variant.conditions?.forEach(condition => {
-          if (condition.condition === 'Sealed') {
-            const sealedProduct: SealedProduct = {
-              product_id: card.card_id + '-' + variant.variant, // Unique ID
-              set_id: setData.id,
-              game_id: setData.game_id,
-              name: `${card.name} (${variant.variant})`,
-              product_type: variant.variant,
-              image_url: card.image_url || card.imageUrl,
-              variants: [variant]
-            };
-            acc.push(sealedProduct);
-          }
-        });
+        // Support both shapes: variant.condition or variant.conditions[]
+        const conditionsArray = (variant as any).conditions as any[] | undefined;
+        if (conditionsArray && Array.isArray(conditionsArray)) {
+          conditionsArray.forEach(condition => {
+            if (condition.condition === 'Sealed') {
+              const sealedProduct: SealedProduct = {
+                product_id: (card as any).card_id + '-' + variant.variant,
+                set_id: setData.id,
+                game_id: setData.game_id,
+                name: `${card.name} (${variant.variant})`,
+                product_type: variant.variant,
+                image_url: (card as any).image_url || (card as any).imageUrl,
+                variants: [variant]
+              };
+              acc.push(sealedProduct);
+            }
+          });
+        } else if ((variant as any).condition === 'Sealed') {
+          const sealedProduct: SealedProduct = {
+            product_id: (card as any).card_id + '-' + variant.variant,
+            set_id: setData.id,
+            game_id: setData.game_id,
+            name: `${card.name} (${variant.variant})`,
+            product_type: variant.variant,
+            image_url: (card as any).image_url || (card as any).imageUrl,
+            variants: [variant]
+          };
+          acc.push(sealedProduct);
+        }
       });
     }
     return acc;
@@ -591,7 +606,7 @@ async function syncCards(supabaseClient: any, setId: string) {
   const { count: actualDbCount } = await supabaseClient
     .from('cards')
     .select('*', { count: 'exact', head: true })
-    .eq('set_id', dbSetId);
+    .eq('set_id', setData.id);
   
   const actualCardsCount = actualDbCount || 0;
   
