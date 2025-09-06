@@ -7,6 +7,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { ApiInspector } from "./components/ApiInspector";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
+import HarvestManager from "./pages/HarvestManager";
 import NotFound from "./pages/NotFound";
 
 const App = () => (
@@ -18,6 +19,7 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/auth" element={<Auth />} />
+          <Route path="/harvest" element={<HarvestManager />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
