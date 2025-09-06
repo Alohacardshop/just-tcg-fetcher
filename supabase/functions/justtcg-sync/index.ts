@@ -508,15 +508,29 @@ async function syncCards(supabaseClient: any, setId: string) {
     throw new Error('Sync cancelled by admin');
   }
 
+  // Build a map of JustTCG card IDs to our database card UUIDs for pricing linkage
+  const cardIdMap = new Map();
+  if (upsertedCards) {
+    upsertedCards.forEach(dbCard => {
+      cardIdMap.set(dbCard.jt_card_id, dbCard.id);
+    });
+  }
+
   // Fetch and store pricing data for all cards
   let pricesSynced = 0;
   for (const card of allCards) {
+    const dbCardId = cardIdMap.get(card.id || card.card_id);
+    if (!dbCardId) {
+      console.warn(`No database card ID found for JustTCG card: ${card.id || card.card_id}`);
+      continue;
+    }
+
     if (card.variants) {
       for (const variant of card.variants) {
         if (variant.conditions) {
           for (const condition of variant.conditions) {
             const pricingRecord = {
-              card_id: card.id || card.card_id,
+              card_id: dbCardId, // Use the database UUID, not JustTCG ID
               variant: variant.variant,
               condition: condition.condition,
               currency: condition.currency,
@@ -545,15 +559,20 @@ async function syncCards(supabaseClient: any, setId: string) {
     }
   }
 
+  // Determine sync status based on whether we got all expected cards
+  const isComplete = !expectedTotalCards || allCards.length === expectedTotalCards;
+  const syncStatus = isComplete ? 'completed' : 'partial';
+  const syncError = isComplete ? null : `Expected ${expectedTotalCards} cards but only fetched ${allCards.length}`;
+
   // Update set with sync completion status and counts
   await supabaseClient
     .from('sets')
     .update({ 
-      sync_status: 'completed',
-      cards_synced_count: upsertedCards?.length || 0,
+      sync_status: syncStatus,
+      cards_synced_count: allCards.length, // Count all fetched cards, not just upserted
       sealed_synced_count: upsertedSealed?.length || 0,
       last_synced_at: new Date().toISOString(),
-      last_sync_error: null
+      last_sync_error: syncError
     })
     .eq('jt_set_id', setId);
 
@@ -574,11 +593,15 @@ async function syncCards(supabaseClient: any, setId: string) {
   } catch (error) {
     console.error('Error syncing cards:', error);
     
+    // Determine if this was a cancellation or other error
+    const isCancellation = error.message?.includes('cancelled by admin');
+    const finalStatus = isCancellation ? 'cancelled' : 'error';
+    
     // Update set with error status
     await supabaseClient
       .from('sets')
       .update({ 
-        sync_status: 'error',
+        sync_status: finalStatus,
         last_sync_error: error.message
       })
       .eq('jt_set_id', setId);
