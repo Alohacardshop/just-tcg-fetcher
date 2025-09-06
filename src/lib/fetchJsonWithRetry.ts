@@ -30,7 +30,7 @@ export async function fetchJsonWithRetry(
         controller.abort();
       }, timeoutMs);
       
-      console.log(`🔄 Attempt ${attempt}/${tries} for ${url}`);
+      console.log(`🔄 JustTCG API attempt ${attempt}/${tries}: ${url}`);
       
       const response = await fetch(url, {
         ...init,
@@ -70,8 +70,17 @@ export async function fetchJsonWithRetry(
         throw error;
       }
       
-      console.log(`✅ Request succeeded on attempt ${attempt} after ${duration}ms`);
-      return await response.json();
+      console.log(`✅ JustTCG API success on attempt ${attempt} (${duration}ms)`);
+      const jsonResponse = await response.json();
+      console.log(`📦 JustTCG API response preview:`, {
+        hasData: !!jsonResponse.data,
+        dataType: typeof jsonResponse.data,
+        dataLength: Array.isArray(jsonResponse.data) ? jsonResponse.data.length : 'not array',
+        hasMeta: !!jsonResponse.meta,
+        metaTotal: jsonResponse.meta?.total,
+        metaHasMore: jsonResponse.meta?.hasMore
+      });
+      return jsonResponse;
       
     } catch (error: any) {
       const duration = Date.now() - startTime;

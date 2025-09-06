@@ -349,23 +349,28 @@ async function syncCards(supabaseClient: any, setId: string) {
     console.log(`🃏 Fetching all cards for set: ${setName} in game: ${normalizedGameId}`);
     console.log(`🔍 Calling listAllCardsBySet with params:`, { gameId: normalizedGameId, setId: setName });
     
-    const cardsResult = await listAllCardsBySet({ 
-      gameId: normalizedGameId, 
-      setId: setName 
-    });
-    
-    // Fix destructuring - listAllCardsBySet returns { items, meta }
-    const allCards = cardsResult.items || [];
-    const cardsMeta = cardsResult.meta;
-    
-    console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
-    console.log(`🔍 cardsResult structure:`, { 
-      hasItems: !!cardsResult.items, 
-      itemsLength: cardsResult.items?.length, 
-      hasMeta: !!cardsResult.meta,
-      rawResultType: typeof cardsResult,
-      rawResultKeys: Object.keys(cardsResult)
-    });
+    try {
+      const cardsResult = await listAllCardsBySet({ 
+        gameId: normalizedGameId, 
+        setId: setName 
+      });
+      
+      // Fix destructuring - listAllCardsBySet returns { items, meta }
+      const allCards = cardsResult.items || [];
+      const cardsMeta = cardsResult.meta;
+      
+      console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
+      console.log(`🔍 cardsResult structure:`, { 
+        hasItems: !!cardsResult.items, 
+        itemsLength: cardsResult.items?.length, 
+        hasMeta: !!cardsResult.meta,
+        rawResultType: typeof cardsResult,
+        rawResultKeys: Object.keys(cardsResult)
+      });
+    } catch (apiError) {
+      console.error(`❌ API call failed:`, apiError);
+      throw new Error(`Failed to fetch cards from JustTCG API: ${apiError.message}`);
+    }
 
     // Check for cancellation after fetching cards
     if (await shouldCancel()) {
