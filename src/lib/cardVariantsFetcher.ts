@@ -47,6 +47,11 @@ export interface VariantsFetchParams {
   name?: string;
   game?: string;
   set?: string;
+  // Full mode strips printing/condition filters
+  full?: boolean;
+  // Server-side sorting (only for game/set queries, not ID/search)
+  orderBy?: 'price' | '24h' | '7d' | '30d';
+  order?: 'asc' | 'desc';
 }
 
 /**
@@ -58,11 +63,21 @@ export interface VariantsFetchParams {
 export async function fetchCardVariants(params: VariantsFetchParams): Promise<VariantsFetchResponse> {
   const JUSTTCG_BASE_URL = 'https://api.justtcg.com/v1';
   
-  // Guard: ID takes precedence over text search
+  // Input validation
   const hasIdParam = !!(params.tcgplayerId || params.cardId || params.variantId);
+  const hasGameSet = !!(params.game && params.set);
   
+  // Validate inputs based on query type
+  if (!hasIdParam && !hasGameSet && !params.name) {
+    throw new Error('Validation failed: Require either ID (tcgplayerId/cardId/variantId) or game+set for set-level queries, or name for text search');
+  }
+  
+  // Guard: ID takes precedence over text search
   if (hasIdParam) {
     console.log('🆔 ID parameter provided, ignoring text search inputs');
+    if (params.name || params.game || params.set) {
+      console.log('⚠️ Text search parameters ignored due to ID precedence');
+    }
   }
   
   // Build query parameters
@@ -79,25 +94,39 @@ export async function fetchCardVariants(params: VariantsFetchParams): Promise<Va
     if (params.name) queryParams.append('name', params.name);
     if (params.game) queryParams.append('game', params.game);
     if (params.set) queryParams.append('set', params.set);
+    
+    // Add server-side sorting for game/set queries (not for text search)
+    if (hasGameSet && params.orderBy) {
+      queryParams.append('orderBy', params.orderBy);
+      if (params.order) {
+        queryParams.append('order', params.order);
+      }
+    }
+  }
+  
+  // Full mode: don't add printing/condition filters (they're stripped)
+  if (params.full) {
+    console.log('🔓 Full mode enabled - all variants will be returned without filtering');
   }
   
   const url = `${JUSTTCG_BASE_URL}/cards?${queryParams.toString()}`;
   
   try {
-    const response = await fetch(url, {
+    // Import fetchJsonWithRetry for enhanced error handling
+    const { fetchJsonWithRetry } = await import('./fetchJsonWithRetry');
+    
+    const data = await fetchJsonWithRetry(url, {
       headers: {
         'x-api-key': await getApiKey(),
         'Content-Type': 'application/json'
       }
+    }, {
+      tries: 3,
+      baseDelayMs: 500,
+      timeoutMs: 30000
     });
     
-    if (!response.ok) {
-      throw new Error(`JustTCG API error: ${response.status} - ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    
-    // Return the API response unchanged - don't synthesize IDs
+    // Return the API response unchanged - preserve exact IDs from API
     return data as VariantsFetchResponse;
     
   } catch (error) {

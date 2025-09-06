@@ -16,6 +16,9 @@ export async function fetchJsonWithRetry(
 ): Promise<any> {
   const { tries = 5, timeoutMs = 90000, baseDelayMs = 400 } = opts || {};
   
+  // Log API limits for tuning concurrency
+  console.log(`🏢 JustTCG API Limits - Enterprise: 500 rpm, 50k/day, 500k/month`);
+  
   let lastError: FetchError | null = null;
   
   for (let attempt = 1; attempt <= tries; attempt++) {
@@ -54,14 +57,22 @@ export async function fetchJsonWithRetry(
         error.status = response.status;
         error.body = body;
         
-        // Retry on 429 (rate limit) and 5xx errors
+        // Enhanced retry logic for rate limits and server errors
         if (response.status === 429 || response.status >= 500) {
           console.warn(`⚠️ Attempt ${attempt} failed (${response.status}) after ${duration}ms, will retry`);
+          
+          // Special handling for rate limits
+          if (response.status === 429) {
+            console.warn(`🚫 Rate limit hit - consider reducing concurrency (Enterprise: 500 rpm)`);
+          }
+          
           lastError = error;
           
           if (attempt < tries) {
-            const delay = baseDelayMs * Math.pow(2, attempt - 1);
-            console.log(`⏳ Waiting ${delay}ms before retry...`);
+            // Exponential backoff with jitter for rate limits
+            const baseDelay = response.status === 429 ? baseDelayMs * 2 : baseDelayMs;
+            const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 100;
+            console.log(`⏳ Waiting ${Math.round(delay)}ms before retry...`);
             await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }

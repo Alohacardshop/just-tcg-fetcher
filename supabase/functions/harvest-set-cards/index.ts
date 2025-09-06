@@ -179,24 +179,35 @@ serve(async (req) => {
   }
 
   try {
-    const { gameId, setId, limit = 100, offset = 0 } = await req.json();
+    const { gameId, setId, limit = 100, offset = 0, orderBy, order } = await req.json();
     
+    // Input validation: require gameId+setId for set-level pulls
     if (!gameId || !setId) {
       return new Response(
-        JSON.stringify({ error: 'gameId and setId are required' }),
+        JSON.stringify({ error: 'Input validation failed: gameId and setId are required for set-level pulls' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`🌾 Harvesting cards: ${gameId}/${setId} (limit: ${limit}, offset: ${offset})`);
+    console.log(`🌾 Harvesting cards: ${gameId}/${setId} (limit: ${limit}, offset: ${offset}, orderBy: ${orderBy}, order: ${order})`);
 
-    // Build URL with game, set, limit, offset - NO printing or condition filters
-    const url = buildUrl('cards', {
+    // Build URL with game, set, limit, offset - NO printing or condition filters (full mode)
+    const queryParams: Record<string, string | number> = {
       game: gameId,
       set: setId,
       limit,
       offset
-    });
+    };
+    
+    // Add server-side sorting for set queries
+    if (orderBy) {
+      queryParams.orderBy = orderBy;
+    }
+    if (order) {
+      queryParams.order = order;
+    }
+    
+    const url = buildUrl('cards', queryParams);
 
     // Fetch page of cards with all variants
     const response = await fetchJsonWithRetry(url, {}, {

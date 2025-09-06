@@ -382,6 +382,9 @@ interface PricingRequest {
   condition?: string;
   printing?: string;
   refresh?: boolean;
+  full?: boolean; // Strip printing/condition filters when true
+  orderBy?: 'price' | '24h' | '7d' | '30d';
+  order?: 'asc' | 'desc';
 }
 
 interface PricingResponse {
@@ -404,7 +407,7 @@ serve(async (req) => {
     
     // Parse request body
     const body = await req.json();
-    const { cardId, tcgplayerId, variantId, condition, printing, refresh } = body;
+    const { cardId, tcgplayerId, variantId, condition, printing, refresh, full, orderBy, order } = body;
     
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -427,14 +430,14 @@ serve(async (req) => {
     }
 
     // Log the complete request payload for debugging
-    const requestPayload = { cardId, tcgplayerId, variantId, condition, printing, refresh };
+    const requestPayload = { cardId, tcgplayerId, variantId, condition, printing, refresh, full, orderBy, order };
     logStructured('info', 'Pricing request started', {
       operation,
       ...requestPayload
     });
     console.log(`🏷️ Pricing request payload:`, requestPayload);
     
-    // Determine which identifier to use (ID takes precedence)
+    // Input validation: Require ID or game+set
     const primaryId = cardId || tcgplayerId || variantId;
     const hasIdParam = !!primaryId;
     
@@ -453,6 +456,11 @@ serve(async (req) => {
     }
 
     console.log(`🆔 Using card identifier: ${primaryId} (type: ${cardId ? 'cardId' : tcgplayerId ? 'tcgplayerId' : 'variantId'})`);
+    
+    // Log full mode if enabled
+    if (full) {
+      console.log('🔓 Full mode enabled - will return all variants without filtering');
+    }
 
     // If specific condition/printing requested and cached data exists, check cache first
     if (!refresh && condition && printing) {
@@ -514,7 +522,7 @@ serve(async (req) => {
     console.log(`🔄 Fetching ALL variants from JustTCG for ID: ${primaryId}`);
     
     try {
-      // Build query with only ID parameter - no printing or condition filters
+      // Build query with ID parameter
       const params: Record<string, string> = {};
       
       if (cardId) {
@@ -523,6 +531,19 @@ serve(async (req) => {
         params.tcgplayerId = tcgplayerId;
       } else if (variantId) {
         params.variantId = variantId;
+      }
+      
+      // If full mode is disabled, add filtering (condition/printing)
+      // If full mode is enabled, skip filters to get all variants
+      if (!full) {
+        if (condition) {
+          params.condition = condition;
+        }
+        if (printing) {
+          params.printing = printing;
+        }
+      } else {
+        console.log('🔓 Full mode: skipping condition/printing filters to get all variants');
       }
       
       const pricingUrl = buildUrl('cards', params);

@@ -66,12 +66,16 @@ export interface HarvestResult {
  * @param gameId - Game identifier (e.g., 'pokemon', 'mtg')
  * @param setId - Set identifier (e.g., 'base-set', 'alpha')
  * @param limit - Page size (default: 100, max recommended: 200)
+ * @param orderBy - Server-side sorting by price/change metrics
+ * @param order - Sort order (asc/desc)
  * @returns Promise<HarvestResult> - All cards with complete variant data
  */
 export async function fetchFullSetCards(
   gameId: string, 
   setId: string, 
-  limit: number = 100
+  limit: number = 100,
+  orderBy?: 'price' | '24h' | '7d' | '30d',
+  order?: 'asc' | 'desc'
 ): Promise<HarvestResult> {
   console.log(`🌾 Starting full set harvest: ${gameId}/${setId} (pageSize: ${limit})`);
   
@@ -90,7 +94,7 @@ export async function fetchFullSetCards(
     const pageStartTime = Date.now();
     
     try {
-      console.log(`📄 Fetching page ${pageCount} (offset: ${offset}, limit: ${limit})`);
+      console.log(`📄 Fetching page ${pageCount} (offset: ${offset}, limit: ${limit}, orderBy: ${orderBy}, order: ${order})`);
       
       // Call the proxy function to get page data
       const { data: pageResponse, error } = await supabase.functions.invoke('harvest-set-cards', {
@@ -98,7 +102,9 @@ export async function fetchFullSetCards(
           gameId,
           setId,
           limit,
-          offset
+          offset,
+          orderBy,
+          order
         }
       });
       
@@ -211,18 +217,22 @@ export async function fetchFullSetCards(
  * @param gameId - Game identifier
  * @param setId - Set identifier  
  * @param limit - Page size for harvesting (default: 100)
+ * @param orderBy - Server-side sorting by price/change metrics
+ * @param order - Sort order (asc/desc)
  * @returns Promise<HarvestResult & { dbStats: any }> - Harvest result with DB stats
  */
 export async function syncSet(
   gameId: string,
   setId: string,
-  limit: number = 100
+  limit: number = 100,
+  orderBy?: 'price' | '24h' | '7d' | '30d',
+  order?: 'asc' | 'desc'
 ): Promise<HarvestResult & { dbStats: any }> {
   console.log(`💾 Starting full set sync: ${gameId}/${setId}`);
   
   try {
     // Step 1: Harvest all cards and variants
-    const harvestResult = await fetchFullSetCards(gameId, setId, limit);
+    const harvestResult = await fetchFullSetCards(gameId, setId, limit, orderBy, order);
     
     if (harvestResult.cards.length === 0) {
       throw new Error(`No cards found for set ${gameId}/${setId}`);

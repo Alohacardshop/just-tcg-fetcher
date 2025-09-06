@@ -11,6 +11,10 @@ export type Variant = {
   priceChange90d?: number | null;
   avgPrice?: number | null;
   priceHistory?: Array<{ date: string; price: number }> | null;
+  market_price?: number | null;
+  low_price?: number | null;
+  high_price?: number | null;
+  currency?: string;
 };
 
 export type Card = {
@@ -62,6 +66,7 @@ export type ListParams = {
   pageSize?: number;
   orderBy?: "price" | "24h" | "7d" | "30d";
   order?: "asc" | "desc";
+  full?: boolean; // Strip printing/condition filters when true
 };
 
 export type BatchItem = {
