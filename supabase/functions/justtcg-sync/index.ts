@@ -784,7 +784,7 @@ async function syncCards(supabaseClient: any, setId: string) {
     }
   };
   
-  } catch (error) {
+} catch (error) {
     console.error('Error syncing cards:', error);
     
     // Determine if this was a cancellation or other error
