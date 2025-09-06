@@ -701,11 +701,9 @@ export const DataImportPanel = () => {
     setImportProgress(0);
     
     try {
+      console.log('🧪 Invoking sync-cards-v2 with payload:', { setId, gameId, background: true });
       const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
-        body: { setId, gameId, background: true },
-        headers: {
-          'Content-Type': 'application/json'
-        }
+        body: { setId, gameId, background: true }
       });
 
       if (error) throw error;

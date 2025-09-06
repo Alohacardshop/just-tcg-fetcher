@@ -487,8 +487,10 @@ async function routeRequest(req: Request): Promise<Response> {
     let requestData: SyncCardsRequest;
     try {
       const body = await req.text();
+      console.log('📦 Raw request body:', typeof body, 'len=', body?.length, 'preview=', body?.slice(0, 200));
       requestData = body ? JSON.parse(body) : {};
     } catch (parseError) {
+      console.error('❌ JSON parse error in sync-cards-v2 routeRequest:', parseError);
       return new Response(
         JSON.stringify({ error: 'Invalid JSON in request body' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
