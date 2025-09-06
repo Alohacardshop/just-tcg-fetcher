@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { SyncLogs } from '@/components/SyncLogs';
 import { Loader2, Clock, Calendar } from 'lucide-react';
 
 interface Game {
@@ -278,6 +279,8 @@ export default function AutomationSettings() {
           </div>
         </CardContent>
       </Card>
+
+      <SyncLogs />
     </div>
   );
 }

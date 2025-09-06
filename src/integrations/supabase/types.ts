@@ -407,6 +407,63 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_logs: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          details: Json | null
+          duration_ms: number | null
+          game_id: string | null
+          id: string
+          message: string
+          operation_id: string
+          operation_type: string
+          set_id: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          details?: Json | null
+          duration_ms?: number | null
+          game_id?: string | null
+          id?: string
+          message: string
+          operation_id: string
+          operation_type: string
+          set_id?: string | null
+          status: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          details?: Json | null
+          duration_ms?: number | null
+          game_id?: string | null
+          id?: string
+          message?: string
+          operation_id?: string
+          operation_type?: string
+          set_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sync_logs_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sync_logs_set_id_fkey"
+            columns: ["set_id"]
+            isOneToOne: false
+            referencedRelation: "sets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
