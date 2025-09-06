@@ -696,13 +696,13 @@ export const DataImportPanel = () => {
     }
   };
 
-  const handleSyncCards = async (setId: string) => {
+  const handleSyncCards = async (setId: string, gameId?: string) => {
     setIsImporting(true);
     setImportProgress(0);
     
     try {
       const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
-        body: { setId, background: true },
+        body: { setId, gameId, background: true },
         headers: {
           'Content-Type': 'application/json'
         }
@@ -711,7 +711,7 @@ export const DataImportPanel = () => {
       if (error) throw error;
 
       // Check if this is a background sync response (202 status)
-      if (data.started === true) {
+      if (data?.started === true) {
         setIsImporting(false); // Stop showing importing immediately
         toast({
           title: "Sync Started",
@@ -722,16 +722,18 @@ export const DataImportPanel = () => {
         startSetStatusPolling(setId);
       } else {
         setImportProgress(100);
+        const cardsProcessed = data?.cardsProcessed ?? data?.totalProcessed ?? data?.cards ?? 0;
+        const variantsProcessed = data?.variantsProcessed ?? data?.variants ?? 0;
         toast({
           title: "Cards Synced",
-          description: `Successfully synced ${data.synced} cards and ${data.pricesSynced} prices from JustTCG`,
+          description: `${cardsProcessed} cards, ${variantsProcessed} variants processed`,
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error syncing cards:', error);
       toast({
         title: "Sync Failed",
-        description: error.message || "Failed to sync cards",
+        description: error?.message || "Failed to sync cards",
         variant: "destructive",
       });
     } finally {
@@ -775,7 +777,7 @@ export const DataImportPanel = () => {
           
           try {
             const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
-              body: { setId, background: true },
+              body: { setId, gameId, background: true },
               headers: {
                 'Content-Type': 'application/json'
               }

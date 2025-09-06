@@ -620,9 +620,12 @@ async function syncCardsV2(
     }
 
     // ===== A. HARDENED PAGE LOOP WITH DEFENSIVE GUARDS =====
-    console.log(`🔄 Starting hardened pagination loop for ${gameId}/${setName}`);
+    console.log(`🔄 Starting hardened pagination loop for ${gameId}/${setId}`);
     
-    for await (const cardsPage of justTCGClient.getCards(gameId, setName)) {
+    // Ensure client instance in this scope
+    const justTCGClient = new JustTCGClient();
+    
+    for await (const cardsPage of justTCGClient.getCards(gameId, setId)) {
       // ✅ Defensive guard: treat any non-array page as empty array
       const page = Array.isArray(cardsPage) ? cardsPage : [];
       totalCards += page.length;  // ✅ Safe - page is guaranteed to be array
