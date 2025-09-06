@@ -734,13 +734,18 @@ async function syncCards(supabaseClient: any, setId: string) {
       }
     }
     
-    // Update progress every batch
+    // Update progress every batch (only timestamp, NOT status)
     if ((i + batchSize) % 50 === 0 || i + batchSize >= allCards.length) {
       console.log(`📈 Processed pricing for ${Math.min(i + batchSize, allCards.length)}/${allCards.length} cards`);
-      await supabaseClient
-        .from('sets')
-        .update({ last_synced_at: new Date().toISOString() })
-        .eq('jt_set_id', setId);
+      try {
+        await supabaseClient
+          .from('sets')
+          .update({ last_synced_at: new Date().toISOString() })
+          .eq('jt_set_id', setId);
+      } catch (pricingUpdateError) {
+        console.error('Error updating timestamp during pricing:', pricingUpdateError);
+        // Continue with pricing even if timestamp update fails
+      }
     }
   }
 
@@ -757,8 +762,8 @@ async function syncCards(supabaseClient: any, setId: string) {
   const syncStatus = isComplete ? 'completed' : 'partial';
   const syncError = isComplete ? null : `Expected ${expectedTotalCards} cards but only synced ${actualCardsCount}`;
 
-  // Final update set sync status to completed
-  console.log(`🏁 Finalizing sync for set: ${setId}`);
+  // FINALIZE SET STATUS IMMEDIATELY after cards/sealed upsert (before pricing)
+  console.log(`🏁 Finalizing sync for set: ${setId} (before pricing)`);
   await supabaseClient
     .from('sets')
     .update({ 
@@ -770,7 +775,21 @@ async function syncCards(supabaseClient: any, setId: string) {
     })
     .eq('jt_set_id', setId);
 
-  console.log(`Successfully synced ${upsertedCards?.length || 0} cards, ${upsertedSealed?.length || 0} sealed products, and ${pricesSynced} prices`);
+  console.log(`Successfully synced ${upsertedCards?.length || 0} cards, ${upsertedSealed?.length || 0} sealed products. Starting pricing...`);
+  // Final pricing summary (status was already finalized above)
+  console.log(`💰 Completed pricing for ${pricesSynced} variants. Set status: ${syncStatus}`);
+  
+  // Only update last_synced_at and pricing error if any pricing issues occurred
+  if (pricesSynced === 0 && allCards.length > 0) {
+    await supabaseClient
+      .from('sets')
+      .update({ 
+        last_synced_at: new Date().toISOString(),
+        last_sync_error: syncError ? `${syncError}; No pricing data available` : 'No pricing data available'
+      })
+      .eq('jt_set_id', setId);
+  }
+
   return { 
     synced: upsertedCards?.length || 0, 
     cards: upsertedCards, 
@@ -791,13 +810,17 @@ async function syncCards(supabaseClient: any, setId: string) {
   const finalStatus = isCancellation ? 'cancelled' : 'error';
   
   // Update set with error status
-  await supabaseClient
-    .from('sets')
-    .update({ 
-      sync_status: finalStatus,
-      last_sync_error: (error as any)?.message || 'Unknown error'
-    })
-    .eq('jt_set_id', setId);
+  try {
+    await supabaseClient
+      .from('sets')
+      .update({ 
+        sync_status: finalStatus,
+        last_sync_error: (error as any)?.message || 'Unknown error'
+      })
+      .eq('jt_set_id', setId);
+  } catch (updateError) {
+    console.error('Error updating set status after sync error:', updateError);
+  }
     
   throw error;
 }

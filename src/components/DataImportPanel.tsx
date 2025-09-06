@@ -84,6 +84,9 @@ export const DataImportPanel = () => {
   const { toast } = useToast();
   const { user } = useAuth();
 
+  // Status polling state
+  const [pollingSetIds, setPollingSetIds] = useState<Set<string>>(new Set());
+
   // Check if user is admin
   const checkAdminStatus = async () => {
     if (!user) return;
@@ -160,6 +163,96 @@ export const DataImportPanel = () => {
       toast({
         title: "Force Stopped Locally",
         description: "Operations stopped on client side",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Set status polling for background syncs
+  const startSetStatusPolling = (setId: string) => {
+    if (pollingSetIds.has(setId)) return; // Already polling
+    
+    setPollingSetIds(prev => new Set(prev).add(setId));
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        const { data: setData, error } = await supabase
+          .from('sets')
+          .select('sync_status, last_synced_at')
+          .eq('jt_set_id', setId)
+          .single();
+        
+        if (error) {
+          console.error('Polling error:', error);
+          clearInterval(pollInterval);
+          setPollingSetIds(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(setId);
+            return newSet;
+          });
+          return;
+        }
+        
+        // Stop polling if no longer syncing
+        if (setData?.sync_status !== 'syncing') {
+          clearInterval(pollInterval);
+          setPollingSetIds(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(setId);
+            return newSet;
+          });
+        }
+      } catch (pollError) {
+        console.error('Set polling error:', pollError);
+        clearInterval(pollInterval);
+        setPollingSetIds(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(setId);
+          return newSet;
+        });
+      }
+    }, 5000); // Poll every 5 seconds
+    
+    // Stop polling after 10 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      setPollingSetIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(setId);
+        return newSet;
+      });
+    }, 10 * 60 * 1000);
+  };
+
+  // Reset set status (admin only)
+  const handleResetSetStatus = async (setInternalId: string, setName: string) => {
+    if (!isAdmin) return;
+    
+    try {
+      const { error } = await supabase
+        .from('sets')
+        .update({ 
+          sync_status: 'error',
+          last_sync_error: 'Reset manually by admin'
+        })
+        .eq('id', setInternalId);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Status Reset",
+        description: `${setName} status reset to error state`,
+      });
+      
+      // Refresh sets if expanded
+      if (expandedGameId) {
+        fetchSets(expandedGameId);
+      }
+    } catch (error) {
+      console.error('Error resetting set status:', error);
+      toast({
+        title: "Reset Failed",
+        description: "Failed to reset set status",
         variant: "destructive",
       });
     }
@@ -562,11 +655,23 @@ export const DataImportPanel = () => {
 
       if (error) throw error;
 
-      setImportProgress(100);
-      toast({
-        title: "Cards Synced",
-        description: `Successfully synced ${data.synced} cards and ${data.pricesSynced} prices from JustTCG`,
-      });
+      // Check if this is a background sync response (202 status)
+      if (data.started === true) {
+        setIsImporting(false); // Stop showing importing immediately
+        toast({
+          title: "Sync Started",
+          description: "Sync started and continues in background. Watch set status for updates.",
+        });
+        
+        // Start polling for status updates
+        startSetStatusPolling(setId);
+      } else {
+        setImportProgress(100);
+        toast({
+          title: "Cards Synced",
+          description: `Successfully synced ${data.synced} cards and ${data.pricesSynced} prices from JustTCG`,
+        });
+      }
     } catch (error) {
       console.error('Error syncing cards:', error);
       toast({
@@ -575,6 +680,7 @@ export const DataImportPanel = () => {
         variant: "destructive",
       });
     } finally {
+      // Don't set importing to false if background sync started
       setIsImporting(false);
     }
   };
@@ -593,6 +699,7 @@ export const DataImportPanel = () => {
     
     let successful = 0;
     let failed = 0;
+    let allResults: any[] = [];
     const concurrency = 3; // Process 3 sets at a time
     
     try {
@@ -608,25 +715,33 @@ export const DataImportPanel = () => {
         }
 
         const batch = setIds.slice(i, i + concurrency);
-        const promises = batch.map(async (setId) => {
-          if (bulkCancelRequested) return { success: false, setId };
-          
-          try {
-            const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-              body: { action: 'sync-cards', setId, operationId },
-              headers: {
-                'x-background-sync': 'true'
+          const promises = batch.map(async (setId) => {
+            if (bulkCancelRequested) return { success: false, setId };
+            
+            try {
+              const { data, error } = await supabase.functions.invoke('justtcg-sync', {
+                body: { action: 'sync-cards', setId, operationId },
+                headers: {
+                  'x-background-sync': 'true'
+                }
+              });
+              if (error) throw error;
+              
+              // Handle background sync started response
+              if (data.started === true) {
+                // Start polling for each set if background sync
+                startSetStatusPolling(setId);
               }
-            });
-            if (error) throw error;
-            return { success: true, setId, data };
-          } catch (error) {
-            console.error(`Error syncing set ${setId}:`, error);
-            return { success: false, setId, error: error.message };
-          }
-        });
+              
+              return { success: true, setId, data };
+            } catch (error) {
+              console.error(`Error syncing set ${setId}:`, error);
+              return { success: false, setId, error: error.message };
+            }
+          });
 
         const results = await Promise.all(promises);
+        allResults.push(...results);
         
         results.forEach(result => {
           if (result.success) {
@@ -645,10 +760,19 @@ export const DataImportPanel = () => {
       }
 
       if (!bulkCancelRequested) {
-        toast({
-          title: "Bulk Sync Complete",
-          description: `Processed ${successful + failed}/${setIds.length} sets. ${successful} successful, ${failed} failed.`,
-        });
+        const hasBackgroundSyncs = allResults.some(r => r.success && r.data?.started === true);
+        
+        if (hasBackgroundSyncs) {
+          toast({
+            title: "Bulk Sync Started",
+            description: `${setIds.length} sets started syncing in background. Watch set statuses for updates.`,
+          });
+        } else {
+          toast({
+            title: "Bulk Sync Complete", 
+            description: `Processed ${successful + failed}/${setIds.length} sets. ${successful} successful, ${failed} failed.`,
+          });
+        }
         
         // Clear selections on successful completion
         setSelectedSets(prev => {
@@ -660,11 +784,9 @@ export const DataImportPanel = () => {
     } catch (error) {
       console.error('Error bulk syncing cards:', error);
       toast({
-        title: error.message?.includes('fetch') ? "Sync Started" : "Bulk Sync Failed",
-        description: error.message?.includes('fetch') 
-          ? "Sync started and continues in background. Watch set status for updates."
-          : error.message || "Failed to bulk sync cards",
-        variant: error.message?.includes('fetch') ? "default" : "destructive",
+        title: "Bulk Sync Failed",
+        description: error.message || "Failed to bulk sync cards",
+        variant: "destructive",
       });
     } finally {
       setIsImporting(false);
@@ -1121,27 +1243,40 @@ export const DataImportPanel = () => {
                                       set.total_cards > 0 && 
                                       totalSynced >= set.total_cards;
                                     
+                                    // Check if stuck (syncing for more than 15 minutes)
+                                    const isStuck = set.sync_status === 'syncing' && 
+                                      set.last_synced_at && 
+                                      new Date().getTime() - new Date(set.last_synced_at).getTime() > 15 * 60 * 1000;
+                                    
                                      switch (set.sync_status) {
                                        case 'syncing':
-                                         return <Badge variant="secondary" className="text-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Syncing</Badge>;
+                                         return isStuck 
+                                           ? <Badge variant="destructive" className="text-orange-600 border-orange-500"><AlertTriangle className="h-3 w-3 mr-1" />Stuck</Badge>
+                                           : <Badge variant="secondary" className="text-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Syncing</Badge>;
                                        case 'success':
                                        case 'completed':
                                          return isSynced 
                                            ? <Badge variant="default" className="text-green-600"><CheckCircle className="h-3 w-3 mr-1" />Synced</Badge>
                                            : <Badge variant="secondary" className="text-yellow-600">Partial</Badge>;
+                                       case 'partial':
+                                         return <Badge variant="secondary" className="text-yellow-600">Partial</Badge>;
                                        case 'error':
                                          return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" />Error</Badge>;
                                        default:
                                          return <Badge variant="outline">Not synced</Badge>;
                                      }
-                                  };
+                                   };
+                                   
+                                   const isStuck = set.sync_status === 'syncing' && 
+                                     set.last_synced_at && 
+                                     new Date().getTime() - new Date(set.last_synced_at).getTime() > 15 * 60 * 1000;
                                   
                                   return (
                                     <div key={set.id} className="flex items-center space-x-3 p-3 rounded border border-border/50 bg-background/30">
                                       <Checkbox
                                         checked={isSelected}
                                         onCheckedChange={(checked) => handleSetSelect(game.id, set.jt_set_id, checked as boolean)}
-                                        disabled={set.sync_status === 'syncing'}
+                                        disabled={set.sync_status === 'syncing' && !isStuck}
                                       />
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 mb-1">
@@ -1167,17 +1302,28 @@ export const DataImportPanel = () => {
                                        <div className="flex gap-2">
                                          <Button
                                            onClick={() => handleSyncCards(set.jt_set_id)}
-                                           disabled={isImporting || set.sync_status === 'syncing'}
+                                           disabled={isImporting || (set.sync_status === 'syncing' && !isStuck)}
                                            variant="outline"
                                            size="sm"
                                          >
-                                           {set.sync_status === 'syncing' ? (
+                                           {set.sync_status === 'syncing' && !isStuck ? (
                                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                                            ) : (
                                              <Download className="h-3 w-3 mr-1" />
                                            )}
-                                           {set.sync_status === 'syncing' ? 'Syncing...' : 'Sync Cards'}
+                                           {set.sync_status === 'syncing' && !isStuck ? 'Syncing...' : 'Sync Cards'}
                                          </Button>
+                                         {isAdmin && isStuck && (
+                                           <Button
+                                             onClick={() => handleResetSetStatus(set.id, set.name)}
+                                             size="sm"
+                                             variant="outline"
+                                             className="border-orange-500 text-orange-600 hover:bg-orange-50"
+                                           >
+                                             <RefreshCw className="h-3 w-3 mr-1" />
+                                             Reset
+                                           </Button>
+                                         )}
                                          {set.cards_synced_count > 0 && (
                                            <Button
                                              onClick={() => viewSampleCard(set.id)}
