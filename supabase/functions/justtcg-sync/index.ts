@@ -783,25 +783,23 @@ async function syncCards(supabaseClient: any, setId: string) {
       stoppedReason: 'completed'
     }
   };
-  
 } catch (error) {
   console.error('Error syncing cards:', error);
   
   // Determine if this was a cancellation or other error
-    const isCancellation = error.message?.includes('cancelled by admin');
-    const finalStatus = isCancellation ? 'cancelled' : 'error';
+  const isCancellation = (error as any)?.message?.includes('cancelled by admin');
+  const finalStatus = isCancellation ? 'cancelled' : 'error';
+  
+  // Update set with error status
+  await supabaseClient
+    .from('sets')
+    .update({ 
+      sync_status: finalStatus,
+      last_sync_error: (error as any)?.message || 'Unknown error'
+    })
+    .eq('jt_set_id', setId);
     
-    // Update set with error status
-    await supabaseClient
-      .from('sets')
-      .update({ 
-        sync_status: finalStatus,
-        last_sync_error: error.message
-      })
-      .eq('jt_set_id', setId);
-      
-    throw error;
-  }
+  throw error;
 }
 
 async function syncCardsBulk(supabaseClient: any, setIds: string[], operationId?: string) {
