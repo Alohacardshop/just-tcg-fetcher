@@ -69,8 +69,8 @@ export function useSyncGameMutation() {
   
   return useMutation({
     mutationFn: async (action: string) => {
-      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action }
+      const { data, error } = await supabase.functions.invoke('sync-games-v2', {
+        body: { background: true }
       });
       
       if (error) throw error;
@@ -87,8 +87,8 @@ export function useSyncSetsMutation() {
   
   return useMutation({
     mutationFn: async ({ gameId }: { gameId: string }) => {
-      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-sets', gameId }
+      const { data, error } = await supabase.functions.invoke('sync-sets-v2', {
+        body: { gameId, background: true }
       });
       
       if (error) throw error;
@@ -106,8 +106,8 @@ export function useSyncCardsMutation() {
   
   return useMutation({
     mutationFn: async ({ gameId, setId }: { gameId: string; setId: string }) => {
-      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-cards', gameId, setId }
+      const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
+        body: { gameId, setId, background: true }
       });
       
       if (error) throw error;

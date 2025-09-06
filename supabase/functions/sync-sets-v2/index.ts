@@ -336,10 +336,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     return await routeRequest(req);
   } catch (error) {
-    console.error(error);
+    console.error('🚨 Unhandled error in sync-sets-v2:', error);
     return new Response(
       JSON.stringify({ error: "Internal error", message: (error as Error)?.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });

@@ -1394,12 +1394,12 @@ export const DataImportPanel = () => {
                                         )}
                                       </div>
                                        <div className="flex gap-2">
-                                         <Button
-                                           onClick={() => handleSyncCards(set.jt_set_id)}
-                                           disabled={isImporting || (set.sync_status === 'syncing' && !isStuck)}
-                                           variant="outline"
-                                           size="sm"
-                                         >
+                                          <Button
+                                            onClick={() => handleSyncCards(set.jt_set_id, game?.jt_game_id)}
+                                            disabled={isImporting || (set.sync_status === 'syncing' && !isStuck) || !game?.jt_game_id}
+                                            variant="outline"
+                                            size="sm"
+                                          >
                                            {set.sync_status === 'syncing' && !isStuck ? (
                                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                                            ) : (
