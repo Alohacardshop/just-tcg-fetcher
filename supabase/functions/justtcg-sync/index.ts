@@ -489,38 +489,46 @@ async function syncCards(supabaseClient: any, setId: string) {
 
   // Extract sealed products from card variants
   allSealed = allCards.reduce((acc: SealedProduct[], card: Card) => {
-    if (card.variants) {
-      card.variants.forEach(variant => {
-        // Support both shapes: variant.condition or variant.conditions[]
-        const conditionsArray = (variant as any).conditions as any[] | undefined;
-        if (conditionsArray && Array.isArray(conditionsArray)) {
-          conditionsArray.forEach(condition => {
-            if (condition.condition === 'Sealed') {
+    try {
+      if (card.variants && Array.isArray(card.variants)) {
+        card.variants.forEach(variant => {
+          try {
+            // Support both shapes: variant.condition or variant.conditions[]
+            const conditionsArray = (variant as any).conditions as any[] | undefined;
+            if (conditionsArray && Array.isArray(conditionsArray)) {
+              conditionsArray.forEach(condition => {
+                if (condition && condition.condition === 'Sealed') {
+                  const sealedProduct: SealedProduct = {
+                    product_id: (card as any).card_id + '-' + (variant.variant || 'sealed'),
+                    set_id: setData.id,
+                    game_id: setData.game_id,
+                    name: `${card.name} (${variant.variant || 'Sealed'})`,
+                    product_type: variant.variant || 'Sealed',
+                    image_url: (card as any).image_url || (card as any).imageUrl,
+                    variants: [variant]
+                  };
+                  acc.push(sealedProduct);
+                }
+              });
+            } else if ((variant as any).condition === 'Sealed') {
               const sealedProduct: SealedProduct = {
-                product_id: (card as any).card_id + '-' + variant.variant,
+                product_id: (card as any).card_id + '-' + (variant.variant || 'sealed'),
                 set_id: setData.id,
                 game_id: setData.game_id,
-                name: `${card.name} (${variant.variant})`,
-                product_type: variant.variant,
+                name: `${card.name} (${variant.variant || 'Sealed'})`,
+                product_type: variant.variant || 'Sealed',
                 image_url: (card as any).image_url || (card as any).imageUrl,
                 variants: [variant]
               };
               acc.push(sealedProduct);
             }
-          });
-        } else if ((variant as any).condition === 'Sealed') {
-          const sealedProduct: SealedProduct = {
-            product_id: (card as any).card_id + '-' + variant.variant,
-            set_id: setData.id,
-            game_id: setData.game_id,
-            name: `${card.name} (${variant.variant})`,
-            product_type: variant.variant,
-            image_url: (card as any).image_url || (card as any).imageUrl,
-            variants: [variant]
-          };
-          acc.push(sealedProduct);
-        }
-      });
+          } catch (variantError) {
+            console.error(`Error processing variant for sealed extraction from card ${card.id}:`, variantError.message);
+          }
+        });
+      }
+    } catch (cardError) {
+      console.error(`Error processing card ${card.id} for sealed extraction:`, cardError.message);
     }
     return acc;
   }, []);
@@ -574,18 +582,47 @@ async function syncCards(supabaseClient: any, setId: string) {
       continue;
     }
 
-    if (card.variants) {
+    if (card.variants && Array.isArray(card.variants)) {
       for (const variant of card.variants) {
-        if (variant.conditions) {
-          for (const condition of variant.conditions) {
+        try {
+          // Handle different variant structures
+          if (variant.conditions && Array.isArray(variant.conditions)) {
+            for (const condition of variant.conditions) {
+              const pricingRecord = {
+                card_id: dbCardId,
+                variant: variant.variant || variant.printing || 'Normal',
+                condition: condition.condition,
+                currency: condition.currency || 'USD',
+                market_price: condition.market_price,
+                low_price: condition.low_price,
+                high_price: condition.high_price,
+                source: 'JustTCG',
+                fetched_at: new Date().toISOString()
+              };
+
+              const { error: priceError } = await supabaseClient
+                .from('card_prices')
+                .upsert(pricingRecord, { 
+                  onConflict: 'card_id,variant,condition,source',
+                  ignoreDuplicates: false 
+                });
+
+              if (priceError) {
+                console.error('Error upserting pricing:', priceError);
+              } else {
+                pricesSynced++;
+              }
+            }
+          } else if (variant.condition && variant.price !== undefined) {
+            // Handle direct variant structure (legacy format)
             const pricingRecord = {
-              card_id: dbCardId, // Use the database UUID, not JustTCG ID
-              variant: variant.variant,
-              condition: condition.condition,
-              currency: condition.currency,
-              market_price: condition.market_price,
-              low_price: condition.low_price,
-              high_price: condition.high_price,
+              card_id: dbCardId,
+              variant: variant.variant || variant.printing || 'Normal',
+              condition: variant.condition,
+              currency: variant.currency || 'USD',
+              market_price: variant.price,
+              low_price: variant.lowPrice,
+              high_price: variant.highPrice,
               source: 'JustTCG',
               fetched_at: new Date().toISOString()
             };
@@ -603,6 +640,9 @@ async function syncCards(supabaseClient: any, setId: string) {
               pricesSynced++;
             }
           }
+        } catch (variantError) {
+          console.error(`Error processing variant for card ${card.id}:`, variantError.message);
+          console.error('Variant structure:', JSON.stringify(variant, null, 2));
         }
       }
     }
