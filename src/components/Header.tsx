@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Sparkles, Github, LogOut, User, Package } from "lucide-react";
+import { Sparkles, Github, LogOut, User, Package, Clock } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useLocation } from "react-router-dom";
 
@@ -41,6 +41,15 @@ export const Header = () => {
               >
                 <Package className="h-4 w-4" />
                 Harvest Manager
+              </Link>
+              <Link
+                to="/automation"
+                className={`text-sm font-medium transition-colors hover:text-primary flex items-center gap-1 ${
+                  location.pathname === '/automation' ? 'text-primary' : 'text-muted-foreground'
+                }`}
+              >
+                <Clock className="h-4 w-4" />
+                Automation
               </Link>
             </nav>
           </div>

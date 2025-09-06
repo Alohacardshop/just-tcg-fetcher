@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      automation_settings: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          game_id: string
+          id: string
+          last_run_at: string | null
+          schedule_time: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          game_id: string
+          id?: string
+          last_run_at?: string | null
+          schedule_time?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          game_id?: string
+          id?: string
+          last_run_at?: string | null
+          schedule_time?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "automation_settings_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       card_prices: {
         Row: {
           card_id: string
