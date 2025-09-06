@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Sparkles, Github, LogOut, User, Package, Clock } from "lucide-react";
+import { Sparkles, Github, LogOut, User, Package, Clock, Home } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useLocation } from "react-router-dom";
 
@@ -27,11 +27,12 @@ export const Header = () => {
             <nav className="hidden md:flex items-center gap-4">
               <Link
                 to="/"
-                className={`text-sm font-medium transition-colors hover:text-primary ${
+                className={`text-sm font-medium transition-colors hover:text-primary flex items-center gap-1 ${
                   location.pathname === '/' ? 'text-primary' : 'text-muted-foreground'
                 }`}
               >
-                Dashboard
+                <Home className="h-4 w-4" />
+                Home
               </Link>
               <Link
                 to="/harvest"
