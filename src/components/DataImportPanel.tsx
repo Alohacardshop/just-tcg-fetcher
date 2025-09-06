@@ -701,9 +701,11 @@ export const DataImportPanel = () => {
     setImportProgress(0);
     
     try {
-      console.log('🧪 Invoking sync-cards-v2 with payload:', { setId, gameId, game: gameId, background: true });
+      // Map internal game UUID to JT slug for the API
+      const jtGameId = games.find(g => g.id === gameId)?.jt_game_id;
+      console.log('🧪 Invoking sync-cards-v2 with payload:', { setId, game: jtGameId, background: true });
       const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
-        body: { setId, gameId, game: gameId, background: true }
+        body: { setId, game: jtGameId, background: true }
       });
 
       if (error) throw error;

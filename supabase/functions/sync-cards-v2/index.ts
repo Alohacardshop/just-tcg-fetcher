@@ -580,7 +580,8 @@ async function routeRequest(req: Request): Promise<Response> {
 
     // Validate required parameters with defensive guards
     const setId = typeof requestData.setId === 'string' ? requestData.setId.trim() : '';
-    const gameId = typeof requestData.gameId === 'string' ? requestData.gameId.trim() : '';
+    const gameParam = requestData.game || requestData.gameId; // Accept either 'game' or 'gameId'
+    const gameId = typeof gameParam === 'string' ? gameParam.trim() : '';
     const operationId = typeof requestData.operationId === 'string' ? requestData.operationId : undefined;
     const isBackground = Boolean(requestData.background);
 
@@ -599,7 +600,7 @@ async function routeRequest(req: Request): Promise<Response> {
     }
 
     // gameId is optional; if omitted, syncCardsV2 will derive it from DB
-    console.log('📥 sync-cards-v2 request:', { setId, gameId: gameId || 'will derive from DB', operationId, isBackground });
+    console.log('📥 sync-cards-v2 parsed:', { setId, gameId: gameId || 'will derive from DB', operationId, isBackground });
 
     // Verify environment variables
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
