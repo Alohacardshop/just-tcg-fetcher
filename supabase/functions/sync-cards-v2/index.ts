@@ -150,6 +150,40 @@ export class JustTCGClient {
   }
 
   /**
+   * Resolve the appropriate set identifier for JustTCG API
+   * Prefers 'code' over 'setId' for better API compatibility
+   */
+  async resolveSetIdentifier(gameId: string, setId: string): Promise<string> {
+    try {
+      console.log(`🔍 Resolving set identifier for ${gameId}/${setId}`);
+      
+      // First, try to get set details from our database to find the code
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      
+      if (supabaseUrl && supabaseKey) {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data: setData } = await supabase
+          .from('sets')
+          .select('code, jt_set_id')
+          .eq('jt_set_id', setId)
+          .single();
+        
+        if (setData?.code) {
+          console.log(`✅ Using set code: ${setData.code} instead of ${setId}`);
+          return setData.code;
+        }
+      }
+      
+      console.log(`📝 No code found, using original setId: ${setId}`);
+      return setId;
+    } catch (error) {
+      console.warn(`⚠️ Error resolving set identifier, using original: ${setId}`, error.message);
+      return setId;
+    }
+  }
+
+  /**
    * Generator function that yields card pages as arrays only
    * Never yields undefined/null - always returns empty array on error
    * ===== C. NORMALIZE ITERATOR OUTPUT =====
@@ -158,6 +192,11 @@ export class JustTCGClient {
     console.log(`🃏 Starting JustTCGClient.getCards for ${gameId}/${setId} (pageSize: ${pageSize})`);
     
     const normalizedGameId = normalizeGameSlug(gameId);
+    
+    // Resolve the appropriate set identifier (prefer code over setId)
+    const resolvedSetId = await this.resolveSetIdentifier(gameId, setId);
+    console.log(`🎯 Using resolved set identifier: ${resolvedSetId} for cards API`);
+    
     let offset = 0;
     let hasMore = true;
     let pageCount = 0;
@@ -170,10 +209,10 @@ export class JustTCGClient {
       try {
         console.log(`📄 JustTCGClient fetching page ${pageCount} (offset: ${offset}, limit: ${pageSize})`);
         
-        // Build query parameters
+        // Build query parameters with resolved set identifier
         const params: Record<string, string | number> = {
           game: normalizedGameId,
-          set: setId,
+          set: resolvedSetId,
           limit: pageSize,
           offset: offset
         };
