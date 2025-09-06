@@ -152,7 +152,7 @@ export class JustTCGClient {
   /**
    * Enhanced set resolution: DB code → JustTCG API fallback → retry logic
    */
-  async resolveSetCode(gameSlug: string, setId: string): Promise<{ code: string; source: string }> {
+  async resolveSetCode(gameSlug: string, setId: string, supabaseClient?: any): Promise<{ code: string; source: string }> {
     console.log(`🔍 Resolving set code for game=${gameSlug}, setId=${setId}`);
 
     try {
@@ -163,13 +163,9 @@ export class JustTCGClient {
         return { code: setId, source: 'direct-code' };
       }
 
-      // 2. Try to get code from our database first
-      const supabaseUrl = Deno.env.get('SUPABASE_URL');
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-
-      if (supabaseUrl && supabaseKey) {
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        const { data: setData } = await supabase
+      // 2. Try to get code from our database first (if supabase client provided)
+      if (supabaseClient) {
+        const { data: setData } = await supabaseClient
           .from('sets')
           .select('code, jt_set_id, name')
           .eq('jt_set_id', setId)
@@ -198,10 +194,10 @@ export class JustTCGClient {
         const pageSize = 200;
         let page = 0;
 
-        while (page < 10) { // safety cap
+        while (page < 5) { // Reduced safety cap
           page++;
           const url = buildUrl('sets', { game: normalizedGame, limit: pageSize, offset });
-          console.log(`🔎 JustTCG sets lookup attempt ${page}: ${url}`);
+          console.log(`🔎 JustTCG sets lookup attempt ${page}: searching for "${searchTerm}"`);
           
           const response = await fetchJsonWithRetry(url);
           const items = (response?.data || response?.sets || response?.items || []) as any[];
@@ -251,17 +247,26 @@ export class JustTCGClient {
     }
   }
 
+      console.log(`⚠️ No code found via DB or API, using original setId: ${setId}`);
+      return { code: setId, source: 'fallback-original' };
+
+    } catch (error: any) {
+      console.warn(`⚠️ Error in set resolution, using original setId: ${setId}`, error?.message || error);
+      return { code: setId, source: 'error-fallback' };
+    }
+  }
+
   /**
    * Enhanced cards fetching with proper set code resolution
    * Supports both limit/offset and page/pageSize pagination
    */
-  async* getCards(gameId: string, setId: string, pageSize = 100): AsyncGenerator<any[], void, unknown> {
+  async* getCards(gameId: string, setId: string, pageSize = 100, supabaseClient?: any): AsyncGenerator<any[], void, unknown> {
     console.log(`🃏 Starting enhanced JustTCGClient.getCards for ${gameId}/${setId} (pageSize: ${pageSize})`);
     
     const normalizedGameId = normalizeGameSlug(gameId);
     
     // Enhanced set resolution
-    const { code: resolvedSetCode, source } = await this.resolveSetCode(gameId, setId);
+    const { code: resolvedSetCode, source } = await this.resolveSetCode(gameId, setId, supabaseClient);
     console.log(`🎯 Set resolution: "${setId}" → "${resolvedSetCode}" (source: ${source})`);
     
     let offset = 0;
@@ -689,9 +694,6 @@ async function routeRequest(req: Request): Promise<Response> {
 
     // background by default if requested
     const isBg = Boolean(body.background);
-
-    // background by default if requested
-    const isBg = Boolean(body.background);
     if (isBg) {
       // @ts-ignore EdgeRuntime may not exist in types
       if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
@@ -778,7 +780,7 @@ async function syncCardsV2(
     // Ensure client instance in this scope
     const justTCGClient = new JustTCGClient();
     
-    for await (const cardsPage of justTCGClient.getCards(gameId, setId)) {
+    for await (const cardsPage of justTCGClient.getCards(gameId, setId, 100, supabaseClient)) {
       // ✅ Defensive guard: treat any non-array page as empty array
       const page = Array.isArray(cardsPage) ? cardsPage : [];
       totalCards += page.length;  // ✅ Safe - page is guaranteed to be array
