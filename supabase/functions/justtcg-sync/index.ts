@@ -97,8 +97,9 @@ serve(async (req) => {
       );
     }
 
-    const { action, gameId, setId, setIds } = await req.json();
-    console.log(`Starting JustTCG sync action: ${action}`, { gameId, setId, setIds });
+    const body = await req.json();
+    const { action, gameId, setId, setIds, operationId } = body;
+    console.log(`Starting JustTCG sync action: ${action}`, { gameId, setId, setIds, operationId });
 
     let result = {};
 
@@ -116,7 +117,6 @@ serve(async (req) => {
         break;
       case 'sync-cards-bulk':
         if (!setIds || !Array.isArray(setIds)) throw new Error('setIds array required for sync-cards-bulk');
-        const operationId = body.operationId;
         result = await syncCardsBulk(supabaseClient, setIds, operationId);
         break;
       default:
@@ -282,6 +282,29 @@ async function syncSets(supabaseClient: any, gameId: string) {
 async function syncCards(supabaseClient: any, setId: string) {
   console.log(`Syncing cards for set: ${setId}`);
 
+  // Function to check for cancellation signals
+  async function shouldCancel(): Promise<boolean> {
+    try {
+      const { data } = await supabaseClient
+        .from('sync_control')
+        .select('should_cancel')
+        .eq('operation_type', 'force_stop')
+        .limit(1)
+        .single();
+      
+      return data?.should_cancel === true;
+    } catch (error) {
+      // If we can't check cancellation status, continue
+      return false;
+    }
+  }
+
+  // Check for cancellation before starting
+  if (await shouldCancel()) {
+    console.log(`🛑 Sync cancelled by admin for set: ${setId}`);
+    throw new Error('Sync cancelled by admin');
+  }
+
   // Update set status to syncing
   await supabaseClient
     .from('sets')
@@ -316,13 +339,30 @@ async function syncCards(supabaseClient: any, setId: string) {
   
     console.log(`Fetching cards for game: ${gameId} (normalized: ${normalizedGameId}), set: ${setName} (expected: ${expectedTotalCards} cards)`);
 
+    // Check for cancellation before fetching cards
+    if (await shouldCancel()) {
+      console.log(`🛑 Sync cancelled by admin before card fetch for set: ${setId}`);
+      throw new Error('Sync cancelled by admin');
+    }
+
     // Get all cards for this set using complete pagination
     console.log(`🃏 Fetching all cards for set: ${setId} in game: ${gameId}`);
-    const { items: allCards, meta: cardsMeta } = await listAllCardsBySet({ 
+    const cardsResult = await listAllCardsBySet({ 
       gameId: normalizedGameId, 
       setId: setName 
     });
+    
+    // Fix destructuring - listAllCardsBySet returns { items, meta }
+    const allCards = cardsResult.items || [];
+    const cardsMeta = cardsResult.meta;
+    
     console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
+
+    // Check for cancellation after fetching cards
+    if (await shouldCancel()) {
+      console.log(`🛑 Sync cancelled by admin after card fetch for set: ${setId}`);
+      throw new Error('Sync cancelled by admin');
+    }
 
     // Pokemon Japan empty results guard: Check for English-only sets
     if (normalizedGameId === 'pokemon-japan' && allCards.length === 0) {
@@ -380,6 +420,12 @@ async function syncCards(supabaseClient: any, setId: string) {
         })
         .eq('jt_set_id', setId);
       return { synced: 0, cards: [], sealedSynced: 0, pricesSynced: 0 };
+    }
+
+    // Check for cancellation before upserting cards
+    if (await shouldCancel()) {
+      console.log(`🛑 Sync cancelled by admin before card upsert for set: ${setId}`);
+      throw new Error('Sync cancelled by admin');
     }
 
   // Upsert cards
@@ -454,6 +500,12 @@ async function syncCards(supabaseClient: any, setId: string) {
   if (sealedError) {
     console.error('Error upserting sealed products:', sealedError);
     throw new Error(`Database error: ${sealedError.message}`);
+  }
+
+  // Check for cancellation before pricing sync
+  if (await shouldCancel()) {
+    console.log(`🛑 Sync cancelled by admin before pricing sync for set: ${setId}`);
+    throw new Error('Sync cancelled by admin');
   }
 
   // Fetch and store pricing data for all cards
