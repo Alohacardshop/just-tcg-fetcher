@@ -105,6 +105,9 @@ async function fetchJsonWithRetry(
 ): Promise<any> {
   const { tries = 5, timeoutMs = 90000, baseDelayMs = 400 } = options;
   
+  // Log API limits for tuning concurrency
+  console.log(`🏢 JustTCG API Limits - Enterprise: 500 rpm, 50k/day, 500k/month`);
+  
   let lastError: any = null;
   
   for (let attempt = 1; attempt <= tries; attempt++) {
@@ -144,149 +147,29 @@ async function fetchJsonWithRetry(
         body: body.substring(0, 500)
       };
       
+      // Enhanced retry logic for rate limits and server errors
       if (response.status === 429 || response.status >= 500) {
+        console.warn(`⚠️ Attempt ${attempt} failed (${response.status}) after ${duration}ms, will retry`);
+        
+        // Special handling for rate limits
+        if (response.status === 429) {
+          console.warn(`🚫 Rate limit hit - consider reducing concurrency (Enterprise: 500 rpm)`);
+        }
+        
         lastError = error;
         
-        console.warn(`⚠️ Retryable error on attempt ${attempt} (${duration}ms): ${error.status} - ${body.substring(0, 100)}`);
-        
         if (attempt < tries) {
-          const delayMs = baseDelayMs * Math.pow(2, attempt - 1);
-          console.log(`⏰ Waiting ${delayMs}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
+          // Exponential backoff with jitter for rate limits
+          const baseDelay = response.status === 429 ? baseDelayMs * 2 : baseDelayMs;
+          const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 100;
+          console.log(`⏳ Waiting ${Math.round(delay)}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
       } else {
         console.error(`❌ Non-retryable error on attempt ${attempt} (${duration}ms): ${error.status}`);
         throw error;
-}
-
-/**
- * Complete pagination for cards by set - loops until meta.hasMore === false
- * Returns all cards for a given game/set with optional ordering support
- */
-async function listAllCardsBySet({
-  gameId,
-  setId,
-  pageSize = 100,
-  orderBy,
-  order
-}: {
-  gameId: string;
-  setId: string;
-  pageSize?: number;
-  orderBy?: 'price' | '24h' | '7d' | '30d';
-  order?: 'asc' | 'desc';
-}): Promise<any[]> {
-  console.log(`🃏 Starting complete cards pagination for ${gameId}/${setId} (pageSize: ${pageSize}, orderBy: ${orderBy}, order: ${order})`);
-  
-  let allCards: any[] = [];
-  let offset = 0;
-  let hasMore = true;
-  let pageCount = 0;
-  let expectedTotal: number | null = null;
-  
-  while (hasMore) {
-    pageCount++;
-    const startTime = Date.now();
-    
-    try {
-      console.log(`📄 Fetching cards page ${pageCount} (offset: ${offset}, limit: ${pageSize})`);
-      
-      // Build query parameters
-      const params: Record<string, string | number> = {
-        game: gameId,
-        set: setId,
-        limit: pageSize,
-        offset: offset
-      };
-      
-      // Add ordering parameters if specified (only for game/set queries, not search)
-      if (orderBy) {
-        params.orderBy = orderBy;
       }
-      if (order) {
-        params.order = order;
-      }
-      
-      const url = buildUrl('cards', params);
-      
-      const response = await fetchJsonWithRetry(url);
-      const duration = Date.now() - startTime;
-      
-      // Extract data and metadata
-      const pageData = response.data || response.cards || [];
-      const meta = response.meta || response._metadata || {};
-      
-      // Store expected total from first page
-      if (pageCount === 1 && meta.total !== undefined) {
-        expectedTotal = meta.total;
-        console.log(`📊 Expected total cards: ${expectedTotal}`);
-      }
-      
-      console.log(`✅ Page ${pageCount} fetched: ${pageData.length} cards (${duration}ms)`);
-      console.log(`📈 Meta info - hasMore: ${meta.hasMore}, total: ${meta.total}, limit: ${meta.limit}, offset: ${meta.offset}`);
-      
-      if (pageData.length === 0) {
-        console.log(`📭 Empty page received, stopping pagination`);
-        break;
-      }
-      
-      // Accumulate data
-      allCards.push(...pageData);
-      
-      // Check meta.hasMore first (most reliable)
-      if (meta.hasMore === false) {
-        console.log(`🏁 meta.hasMore === false, pagination complete`);
-        hasMore = false;
-        break;
-      }
-      
-      // Fallback: if we got fewer items than requested, assume we're done
-      if (pageData.length < pageSize) {
-        console.log(`🏁 Partial page (${pageData.length}/${pageSize}), assuming end of data`);
-        hasMore = false;
-        break;
-      }
-      
-      // Update offset for next page
-      offset += pageData.length;
-      
-      // Safety check: if we've reached expected total, stop
-      if (expectedTotal !== null && allCards.length >= expectedTotal) {
-        console.log(`🏁 Reached expected total (${allCards.length}/${expectedTotal}), stopping`);
-        hasMore = false;
-        break;
-      }
-      
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      console.error(`❌ Error fetching cards page ${pageCount} (${duration}ms):`, error.message);
-      
-      // If we have some data, return what we got; otherwise re-throw
-      if (allCards.length > 0) {
-        console.warn(`⚠️ Partial data recovered: ${allCards.length} cards from ${pageCount - 1} successful pages`);
-        break;
-      } else {
-        throw error;
-      }
-    }
-  }
-  
-  console.log(`📊 Cards pagination complete for ${gameId}/${setId}:`);
-  console.log(`   Total cards fetched: ${allCards.length}`);
-  console.log(`   Pages processed: ${pageCount}`);
-  console.log(`   Expected total: ${expectedTotal || 'unknown'}`);
-  console.log(`   Ordering: ${orderBy ? `${orderBy} ${order || 'asc'}` : 'default'}`);
-  
-  // Validate against expected total if available
-  if (expectedTotal !== null && allCards.length !== expectedTotal) {
-    console.warn(`⚠️ Count mismatch: fetched ${allCards.length}, expected ${expectedTotal}`);
-  } else if (expectedTotal !== null) {
-    console.log(`✅ Count matches expected total: ${allCards.length}`);
-  }
-  
-  return allCards;
-}
       
     } catch (networkError) {
       const duration = Date.now() - startTime;
@@ -325,50 +208,6 @@ async function listAllCardsBySet({
   };
 }
 
-function extractDataFromEnvelope(response: any): { data: any[], hasMore?: boolean } {
-  if (Array.isArray(response)) {
-    return { data: response };
-  }
-  
-  const patterns = ['data', 'results', 'items', 'sets', 'cards', 'games'];
-  
-  for (const pattern of patterns) {
-    if (response[pattern] && Array.isArray(response[pattern])) {
-      const hasMore = response.meta?.hasMore ?? 
-                     response._metadata?.hasMore ?? 
-                     response.pagination?.hasMore ??
-                     undefined;
-      
-      return { 
-        data: response[pattern], 
-        hasMore 
-      };
-    }
-  }
-  
-  if (response.data) {
-    for (const pattern of patterns) {
-      if (response.data[pattern] && Array.isArray(response.data[pattern])) {
-        const hasMore = response.data.meta?.hasMore ?? 
-                       response.data._metadata?.hasMore ?? 
-                       response.data.pagination?.hasMore ??
-                       response.meta?.hasMore ?? 
-                       response._metadata?.hasMore ?? 
-                       response.pagination?.hasMore ??
-                       undefined;
-        
-        return { 
-          data: response.data[pattern], 
-          hasMore 
-        };
-      }
-    }
-  }
-  
-  console.warn('Could not extract data from response envelope:', Object.keys(response));
-  return { data: [] };
-}
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -401,212 +240,184 @@ function json(data: unknown, status = 200) {
   });
 }
 
-async function handleRequest(req: Request): Promise<Response> {
+async function routeRequest(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const operation = 'proxy-pricing';
+  const timer = createTimer();
+  timer.start();
+  
+  // Parse request body
+  const body = await req.json();
+  const { cardId, tcgplayerId, variantId, condition, printing, refresh, full, orderBy, order } = body;
+  
+  const supabaseClient = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  );
+
   try {
-    const operation = 'proxy-pricing';
-    const timer = createTimer();
-    timer.start();
+    // Verify API key is available
+    authHeaders();
+  } catch (error) {
+    logStructured('error', 'JustTCG API key not configured', {
+      operation,
+      error: error.message
+    });
+    console.error('JustTCG API key not found:', error.message);
+    return json({ error: 'API key not configured' }, 500);
+  }
+
+  // Log the complete request payload for debugging
+  const requestPayload = { cardId, tcgplayerId, variantId, condition, printing, refresh, full, orderBy, order };
+  logStructured('info', 'Pricing request started', {
+    operation,
+    ...requestPayload
+  });
+  console.log(`🏷️ Pricing request payload:`, requestPayload);
+  
+  // Input validation: Require ID or game+set
+  const primaryId = cardId || tcgplayerId || variantId;
+  const hasIdParam = !!primaryId;
+  
+  if (!hasIdParam) {
+    const duration = timer.end();
+    logStructured('error', 'Missing card identifier in request payload', {
+      operation,
+      duration,
+      error: 'Card ID (cardId, tcgplayerId, or variantId) is required'
+    });
+    console.error('❌ Missing card identifier in request payload');
+    return json({ success: false, error: 'Card ID (cardId, tcgplayerId, or variantId) is required', status: 400 }, 400);
+  }
+
+  console.log(`🆔 Using card identifier: ${primaryId} (type: ${cardId ? 'cardId' : tcgplayerId ? 'tcgplayerId' : 'variantId'})`);
+  
+  // Log full mode if enabled
+  if (full) {
+    console.log('🔓 Full mode enabled - will return all variants without filtering');
+  }
+
+  // If specific condition/printing requested and cached data exists, check cache first
+  if (!refresh && condition && printing) {
+    // First, get the card details to extract internal ID for cache lookup
+    let internalCardId = null;
     
-    // Parse request body
-    const body = await req.json();
-    const { cardId, tcgplayerId, variantId, condition, printing, refresh, full, orderBy, order } = body;
+    if (cardId) {
+      const { data: cardData } = await supabaseClient
+        .from('cards')
+        .select('jt_card_id')
+        .eq('jt_card_id', cardId)
+        .maybeSingle();
+      internalCardId = cardData?.jt_card_id;
+    }
     
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    if (internalCardId) {
+      const cacheTimer = createTimer();
+      cacheTimer.start();
+      
+      const cacheTimeLimit = new Date(Date.now() - 30 * 60 * 1000); // 30 minutes
+      
+      const { data: cachedPrice, error: cacheError } = await supabaseClient
+        .from('card_prices')
+        .select('*')
+        .eq('card_id', internalCardId)
+        .eq('condition', condition)
+        .eq('variant', printing)
+        .eq('source', 'JustTCG')
+        .gte('fetched_at', cacheTimeLimit.toISOString())
+        .order('fetched_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const cacheDuration = cacheTimer.end();
+      
+      if (!cacheError && cachedPrice) {
+        const totalDuration = timer.end();
+        logStructured('info', 'Using cached pricing', {
+          operation,
+          cardId: primaryId,
+          condition,
+          printing,
+          cached: true,
+          cacheDuration,
+          totalDuration
+        });
+        console.log(`📋 Using cached pricing for card: ${primaryId}`);
+        return json({ 
+          success: true, 
+          pricing: cachedPrice,
+          cached: true 
+        });
+      }
+    }
+  }
+
+  // Fetch ALL variants from JustTCG API using only ID parameter (no filtering)
+  console.log(`🔄 Fetching ALL variants from JustTCG for ID: ${primaryId}`);
+  
+  try {
+    // Build query with ID parameter
+    const params: Record<string, string> = {};
+    
+    if (cardId) {
+      params.cardId = cardId;
+    } else if (tcgplayerId) {
+      params.tcgplayerId = tcgplayerId;
+    } else if (variantId) {
+      params.variantId = variantId;
+    }
+    
+    // If full mode is disabled, add filtering (condition/printing)
+    // If full mode is enabled, skip filters to get all variants
+    if (!full) {
+      if (condition) {
+        params.condition = condition;
+      }
+      if (printing) {
+        params.printing = printing;
+      }
+    } else {
+      console.log('🔓 Full mode: skipping condition/printing filters to get all variants');
+    }
+    
+    const pricingUrl = buildUrl('cards', params);
+    
+    const pricingData = await fetchJsonWithRetry(
+      pricingUrl,
+      {},
+      { tries: 3, baseDelayMs: 500, timeoutMs: 30000 }
     );
 
-    try {
-      // Verify API key is available
-      authHeaders();
-    } catch (error) {
-      logStructured('error', 'JustTCG API key not configured', {
-        operation,
-        error: error.message
-      });
-      console.error('JustTCG API key not found:', error.message);
-      return json({ error: 'API key not configured' }, 500);
-    }
+    // Return API response unchanged - preserve all returned variant fields
+    const response = {
+      success: true,
+      data: pricingData.data || [],
+      meta: pricingData.meta || pricingData._metadata || {},
+      cached: false
+    };
 
-    // Log the complete request payload for debugging
-    const requestPayload = { cardId, tcgplayerId, variantId, condition, printing, refresh, full, orderBy, order };
-    logStructured('info', 'Pricing request started', {
-      operation,
-      ...requestPayload
-    });
-    console.log(`🏷️ Pricing request payload:`, requestPayload);
-    
-    // Input validation: Require ID or game+set
-    const primaryId = cardId || tcgplayerId || variantId;
-    const hasIdParam = !!primaryId;
-    
-    if (!hasIdParam) {
-      const duration = timer.end();
-      logStructured('error', 'Missing card identifier in request payload', {
-        operation,
-        duration,
-        error: 'Card ID (cardId, tcgplayerId, or variantId) is required'
-      });
-      console.error('❌ Missing card identifier in request payload');
-      return json({ success: false, error: 'Card ID (cardId, tcgplayerId, or variantId) is required', status: 400 }, 400);
-    }
-
-    console.log(`🆔 Using card identifier: ${primaryId} (type: ${cardId ? 'cardId' : tcgplayerId ? 'tcgplayerId' : 'variantId'})`);
-    
-    // Log full mode if enabled
-    if (full) {
-      console.log('🔓 Full mode enabled - will return all variants without filtering');
-    }
-
-    // If specific condition/printing requested and cached data exists, check cache first
-    if (!refresh && condition && printing) {
-      // First, get the card details to extract internal ID for cache lookup
-      let internalCardId = null;
-      
-      if (cardId) {
-        const { data: cardData } = await supabaseClient
-          .from('cards')
-          .select('jt_card_id')
-          .eq('jt_card_id', cardId)
-          .maybeSingle();
-        internalCardId = cardData?.jt_card_id;
-      }
-      
-      if (internalCardId) {
-        const cacheTimer = createTimer();
-        cacheTimer.start();
-        
-        const cacheTimeLimit = new Date(Date.now() - 30 * 60 * 1000); // 30 minutes
-        
-        const { data: cachedPrice, error: cacheError } = await supabaseClient
-          .from('card_prices')
-          .select('*')
-          .eq('card_id', internalCardId)
-          .eq('condition', condition)
-          .eq('variant', printing)
-          .eq('source', 'JustTCG')
-          .gte('fetched_at', cacheTimeLimit.toISOString())
-          .order('fetched_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const cacheDuration = cacheTimer.end();
-        
-        if (!cacheError && cachedPrice) {
-          const totalDuration = timer.end();
-          logStructured('info', 'Using cached pricing', {
-            operation,
-            cardId: primaryId,
-            condition,
-            printing,
-            cached: true,
-            cacheDuration,
-            totalDuration
-          });
-          console.log(`📋 Using cached pricing for card: ${primaryId}`);
-          return json({ 
-            success: true, 
-            pricing: cachedPrice,
-            cached: true 
-          });
-        }
-      }
-    // Fetch ALL variants from JustTCG API using only ID parameter (no filtering)
-    console.log(`🔄 Fetching ALL variants from JustTCG for ID: ${primaryId}`);
-    
-    try {
-      // Build query with ID parameter
-      const params: Record<string, string> = {};
-      
-      if (cardId) {
-        params.cardId = cardId;
-      } else if (tcgplayerId) {
-        params.tcgplayerId = tcgplayerId;
-      } else if (variantId) {
-        params.variantId = variantId;
-      }
-      
-      // If full mode is disabled, add filtering (condition/printing)
-      // If full mode is enabled, skip filters to get all variants
-      if (!full) {
-        if (condition) {
-          params.condition = condition;
-        }
-        if (printing) {
-          params.printing = printing;
-        }
-      } else {
-        console.log('🔓 Full mode: skipping condition/printing filters to get all variants');
-      }
-      
-      const pricingUrl = buildUrl('cards', params);
-      
-      const pricingData = await fetchJsonWithRetry(
-        pricingUrl,
-        {},
-        { tries: 3, baseDelayMs: 500, timeoutMs: 30000 }
-      );
-
-      // Return API response unchanged - preserve all returned variant fields
-      const response = {
-        success: true,
-        data: pricingData.data || pricingData || [],
-        cached: false,
-        allVariants: true // Flag to indicate this contains all variants
-      };
-
-      console.log(`✅ Fetched ${response.data.length} cards with all variants for ID: ${primaryId}`);
-      
-      // If specific condition/printing was requested, also save individual pricing records
-      if (condition && printing && response.data.length > 0) {
-        for (const card of response.data) {
-          if (card.variants && Array.isArray(card.variants)) {
-            for (const variant of card.variants) {
-              try {
-                // Handle different variant structures
-                if (variant.conditions && Array.isArray(variant.conditions)) {
-                  for (const conditionData of variant.conditions) {
-                    if ((conditionData.condition || 'Near Mint') === condition && 
-                        (variant.variant || variant.printing || 'Normal') === printing) {
-                      
-                      // Save this specific pricing to database for caching
-                      const pricingRecord = {
-                        card_id: primaryId,
-                        variant: printing,
-                        condition: condition,
-                        currency: conditionData.currency || 'USD',
-                        market_price: conditionData.market_price || conditionData.price,
-                        low_price: conditionData.low_price,
-                        high_price: conditionData.high_price,
-                        source: 'JustTCG',
-                        fetched_at: new Date().toISOString()
-                      };
-
-                      await supabaseClient
-                        .from('card_prices')
-                        .upsert(pricingRecord, { 
-                          onConflict: 'card_id,variant,condition,source',
-                          ignoreDuplicates: false 
-                        });
-                    }
-                  }
-                } else if (variant.condition && variant.price !== undefined) {
-                  // Handle direct variant structure (legacy format)
-                  if ((variant.condition || 'Near Mint') === condition && 
-                      (variant.variant || variant.printing || 'Normal') === printing) {
+    // Cache individual pricing records for faster subsequent lookups
+    if (pricingData.data && Array.isArray(pricingData.data)) {
+      for (const card of pricingData.data) {
+        if (card.variants && Array.isArray(card.variants)) {
+          for (const variant of card.variants) {
+            try {
+              // Handle nested structure: variant.conditions array
+              if (variant.conditions && Array.isArray(variant.conditions)) {
+                for (const conditionData of variant.conditions) {
+                  if (conditionData.condition && conditionData.market_price !== undefined) {
                     
                     const pricingRecord = {
                       card_id: primaryId,
-                      variant: printing,
-                      condition: condition,
-                      currency: variant.currency || 'USD',
-                      market_price: variant.price,
-                      low_price: variant.lowPrice,
-                      high_price: variant.highPrice,
+                      variant: variant.variant || variant.printing || 'Normal',
+                      condition: conditionData.condition,
+                      currency: conditionData.currency || 'USD',
+                      market_price: conditionData.market_price,
+                      low_price: conditionData.low_price,
+                      high_price: conditionData.high_price,
                       source: 'JustTCG',
                       fetched_at: new Date().toISOString()
                     };
@@ -619,58 +430,85 @@ async function handleRequest(req: Request): Promise<Response> {
                       });
                   }
                 }
-              } catch (saveError) {
-                console.warn('Warning: Could not save pricing record:', saveError);
-                // Continue processing other variants
+              } else if (variant.condition && variant.price !== undefined) {
+                // Handle direct variant structure (legacy format)
+                if ((variant.condition || 'Near Mint') === condition && 
+                    (variant.variant || variant.printing || 'Normal') === printing) {
+                  
+                  const pricingRecord = {
+                    card_id: primaryId,
+                    variant: printing,
+                    condition: condition,
+                    currency: variant.currency || 'USD',
+                    market_price: variant.price,
+                    low_price: variant.lowPrice,
+                    high_price: variant.highPrice,
+                    source: 'JustTCG',
+                    fetched_at: new Date().toISOString()
+                  };
+
+                  await supabaseClient
+                    .from('card_prices')
+                    .upsert(pricingRecord, { 
+                      onConflict: 'card_id,variant,condition,source',
+                      ignoreDuplicates: false 
+                    });
+                }
               }
+            } catch (saveError) {
+              console.warn('Warning: Could not save pricing record:', saveError);
+              // Continue processing other variants
             }
           }
         }
       }
-      
-      const totalDuration = timer.end();
-      logStructured('info', 'All variants fetched successfully', {
-        operation,
-        cardId: primaryId,
-        condition,
-        printing,
-        cached: false,
-        duration: totalDuration,
-        variantCount: response.data.reduce((sum, card) => sum + (card.variants?.length || 0), 0)
-      });
-      
-      return json(response);
-
-    } catch (error) {
-      const duration = timer.end();
-      logStructured('error', 'Error fetching variants from JustTCG', {
-        operation,
-        cardId: primaryId,
-        condition,
-        printing,
-        duration,
-        error: error.message
-      });
-      console.error('❌ Error fetching variants from JustTCG:', error.message, 'Payload:', requestPayload);
-      return json({ 
-        success: false, 
-        error: `Variants service error: ${error.message}`,
-        status: 500
-      }, 500);
     }
+    
+    const totalDuration = timer.end();
+    logStructured('info', 'All variants fetched successfully', {
+      operation,
+      cardId: primaryId,
+      condition,
+      printing,
+      cached: false,
+      duration: totalDuration,
+      variantCount: response.data.reduce((sum, card) => sum + (card.variants?.length || 0), 0)
+    });
+    
+    return json(response);
 
   } catch (error) {
-    logStructured('error', 'Top-level error in proxy-pricing function', {
-      operation: 'proxy-pricing',
+    const duration = timer.end();
+    logStructured('error', 'Error fetching variants from JustTCG', {
+      operation,
+      cardId: primaryId,
+      condition,
+      printing,
+      duration,
       error: error.message
     });
-    console.error('❌ Error in proxy-pricing function:', error.message);
+    console.error('❌ Error fetching variants from JustTCG:', error.message, 'Payload:', requestPayload);
     return json({ 
       success: false, 
-      error: `Service error: ${error.message}`,
-      status: 500 
+      error: `Variants service error: ${error.message}`,
+      status: 500
     }, 500);
   }
 }
 
+// ===== CANONICAL TAIL (balanced braces; no stray closers) =====
+
+async function handleRequest(req: Request): Promise<Response> {
+  try {
+    return await routeRequest(req);
+  } catch (error) {
+    console.error(error);
+    return new Response(
+      JSON.stringify({ error: "Internal error", message: (error as Error)?.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+}
+
+// Important: there must be NOTHING after this line. No extra "});".
 Deno.serve(handleRequest);

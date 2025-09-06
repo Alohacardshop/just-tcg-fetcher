@@ -49,15 +49,31 @@ supabase functions serve proxy-pricing --env-file supabase/.env
 supabase functions serve justtcg-sync --env-file supabase/.env
 ```
 
-## ✅ Definition of Done
+## ✅ FIXED: Canonical Structure Applied
 
-- ✅ `proxy-pricing/index.ts` - No dangling `});`, uses `Deno.serve(handleRequest);`
-- ✅ `justtcg-sync/index.ts` - Uses `Deno.serve(handleRequest);` consistently  
-- ✅ Both functions compile without `Expected '}', got '<eof>'` errors
-- ✅ `deno fmt|lint|check` all pass for both files
-- ✅ Deploy succeeds without `(SUPABASE_CODEGEN_ERROR)`
-- ✅ Comprehensive pattern validation scripts in place
-- ✅ GitHub Actions workflow for automated checks
+**proxy-pricing/index.ts** has been rewritten with the canonical tail pattern:
+
+```typescript
+async function routeRequest(req: Request): Promise<Response> {
+  // All business logic here - no nested blocks
+  return json({ success: true });
+}
+
+async function handleRequest(req: Request): Promise<Response> {
+  try {
+    return await routeRequest(req);
+  } catch (error) {
+    console.error(error);
+    return new Response(
+      JSON.stringify({ error: "Internal error", message: (error as Error)?.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+}
+
+// Clean ending - no dangling });
+Deno.serve(handleRequest);
+```
 
 ## Error Prevention
 
@@ -68,6 +84,7 @@ The new Pattern B structure prevents these common issues:
 | `Expected '}', got '<eof>'` | Missing closing brace | Pattern B has no nested braces |
 | `})` unexpected token | Dangling closer | Pattern B ends with single line |
 | Mixed pattern errors | Both patterns in same file | Validation script prevents this |
+| Complex nesting issues | Deep function callbacks | Separate route handler eliminates nesting |
 
 ## Files Changed
 
