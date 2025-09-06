@@ -19,7 +19,10 @@ export function authHeaders(): { [k: string]: string } {
 }
 
 export function buildUrl(path: string, params?: Record<string, string | number | undefined>): string {
-  const url = new URL(path.startsWith('/') ? path.slice(1) : path, BASE);
+  // Ensure base has trailing slash so relative paths resolve under /v1/
+  const base = BASE.endsWith('/') ? BASE : `${BASE}/`;
+  const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+  const url = new URL(normalizedPath, base);
   
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
