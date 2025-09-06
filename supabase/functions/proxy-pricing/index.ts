@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import Stripe from "https://esm.sh/stripe@14.21.0";
 
@@ -395,7 +394,14 @@ interface PricingResponse {
   status?: number; // Add status for better error handling
 }
 
-serve(async (req) => {
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders },
+  });
+}
+
+async function handleRequest(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -423,10 +429,7 @@ serve(async (req) => {
         error: error.message
       });
       console.error('JustTCG API key not found:', error.message);
-      return new Response(
-        JSON.stringify({ success: false, error: 'API key not configured' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return json({ error: 'API key not configured' }, 500);
     }
 
     // Log the complete request payload for debugging
@@ -449,10 +452,7 @@ serve(async (req) => {
         error: 'Card ID (cardId, tcgplayerId, or variantId) is required'
       });
       console.error('❌ Missing card identifier in request payload');
-      return new Response(
-        JSON.stringify({ success: false, error: 'Card ID (cardId, tcgplayerId, or variantId) is required', status: 400 }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return json({ success: false, error: 'Card ID (cardId, tcgplayerId, or variantId) is required', status: 400 }, 400);
     }
 
     console.log(`🆔 Using card identifier: ${primaryId} (type: ${cardId ? 'cardId' : tcgplayerId ? 'tcgplayerId' : 'variantId'})`);
@@ -508,14 +508,11 @@ serve(async (req) => {
             totalDuration
           });
           console.log(`📋 Using cached pricing for card: ${primaryId}`);
-          return new Response(
-            JSON.stringify({ 
-              success: true, 
-              pricing: cachedPrice,
-              cached: true 
-            }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
+          return json({ 
+            success: true, 
+            pricing: cachedPrice,
+            cached: true 
+          });
         }
       }
     // Fetch ALL variants from JustTCG API using only ID parameter (no filtering)
@@ -642,10 +639,7 @@ serve(async (req) => {
         variantCount: response.data.reduce((sum, card) => sum + (card.variants?.length || 0), 0)
       });
       
-      return new Response(
-        JSON.stringify(response),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return json(response);
 
     } catch (error) {
       const duration = timer.end();
@@ -658,14 +652,11 @@ serve(async (req) => {
         error: error.message
       });
       console.error('❌ Error fetching variants from JustTCG:', error.message, 'Payload:', requestPayload);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: `Variants service error: ${error.message}`,
-          status: 500
-        }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      return json({ 
+        success: false, 
+        error: `Variants service error: ${error.message}`,
+        status: 500
+      }, 500);
     }
 
   } catch (error) {
@@ -674,13 +665,12 @@ serve(async (req) => {
       error: error.message
     });
     console.error('❌ Error in proxy-pricing function:', error.message);
-    return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: `Service error: ${error.message}`,
-        status: 500 
-      }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return json({ 
+      success: false, 
+      error: `Service error: ${error.message}`,
+      status: 500 
+    }, 500);
   }
-});
+}
+
+Deno.serve(handleRequest);

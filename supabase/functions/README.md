@@ -16,8 +16,9 @@ npm run deno:check   # Type checking
 
 ## Preventing Brace/EOF Errors
 
-### ✅ RECOMMENDED: Use Deno.serve() pattern
+**CRITICAL**: All functions now use Pattern B (named handler) to prevent syntax errors:
 
+### ✅ Pattern B (STANDARD): Named Handler
 ```typescript
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -36,30 +37,41 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 }
 
-// Single line - no braces to mismatch
+// Single line - no braces to mismatch  
 Deno.serve(handleRequest);
 ```
 
-### ❌ AVOID: Direct serve() callbacks
+### ❌ AVOID: Mixed Patterns
+
+**Never mix these patterns in the same file:**
 
 ```typescript
-// This pattern is error-prone due to nested braces
-serve(async (req) => {
-  // ... lots of code
-  // Easy to miss closing braces
-}); // <- Often missing or misplaced
+// ❌ BAD: Causes dangling }); errors
+async function handleRequest(req: Request): Promise<Response> {
+  return json({ ok: true });
+}
+Deno.serve(handleRequest);
+}); // <- This dangling }); breaks everything!
 ```
 
-## Function-Specific Checks
+**All functions must use Pattern B consistently.**
+
+## Pre-Deploy Checks (MANDATORY)
+
+**Run these before every deployment:**
 
 ```bash
-# Check specific function
-deno fmt supabase/functions/[function-name]/index.ts
-deno lint supabase/functions/[function-name]/index.ts  
-deno check supabase/functions/[function-name]/index.ts
+# Format all functions
+deno fmt supabase/functions/**/*.ts
 
-# Test local serving
-supabase functions serve [function-name] --env-file supabase/.env
+# Lint all functions  
+deno lint supabase/functions/**/*.ts
+
+# Type check all functions
+deno check supabase/functions/**/*.ts
+
+# Pattern validation (prevent mixed patterns)
+bash .github/workflows/check-patterns.sh
 ```
 
 ## CI/CD Integration

@@ -1,0 +1,84 @@
+# Edge Functions CI/CD Checks
+
+This workflow ensures all edge functions are properly formatted and compile correctly before deployment.
+
+## GitHub Actions Example
+
+```yaml
+name: Edge Functions Check
+on:
+  pull_request:
+    paths:
+      - 'supabase/functions/**'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+
+jobs:
+  check-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: v1.x
+          
+      - name: Format Check
+        run: deno fmt --check supabase/functions/**/*.ts
+        
+      - name: Lint Check  
+        run: deno lint supabase/functions/**/*.ts
+        
+      - name: Type Check
+        run: deno check supabase/functions/**/*.ts
+        
+      - name: Pattern Check (prevent mixed patterns)
+        run: |
+          # Check for mixed patterns that cause dangling });
+          for file in supabase/functions/**/index.ts; do
+            if grep -q "Deno\.serve(handleRequest)" "$file" && grep -q "});" "$file"; then
+              echo "ERROR: $file contains both Deno.serve(handleRequest) and dangling });"
+              echo "Use either Pattern A (inline) or Pattern B (named handler), not both"
+              exit 1
+            fi
+          done
+```
+
+## Manual Commands
+
+Run these locally before pushing:
+
+```bash
+# Check all functions
+deno fmt supabase/functions/**/*.ts
+deno lint supabase/functions/**/*.ts  
+deno check supabase/functions/**/*.ts
+
+# Pattern check script
+for file in supabase/functions/**/index.ts; do
+  if grep -q "Deno\.serve(handleRequest)" "$file" && grep -q "});" "$file"; then
+    echo "ERROR: $file has mixed patterns"
+    exit 1
+  fi
+done
+```
+
+## VSCode Settings
+
+Add to `.vscode/settings.json`:
+
+```json
+{
+  "deno.enable": true,
+  "deno.enablePaths": ["./supabase/functions"],
+  "deno.lint": true,
+  "deno.unstable": false,
+  "[typescript]": {
+    "editor.defaultFormatter": "denoland.vscode-deno",
+    "editor.formatOnSave": true
+  }
+}
+```

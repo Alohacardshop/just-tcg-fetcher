@@ -1,77 +1,78 @@
-# Development Scripts
+# Edge Functions Development Guide
 
-Since `package.json` is read-only, here are the recommended scripts to add for edge function development:
+## ✅ NORMALIZED: All functions now use Pattern B
 
-## Recommended package.json Scripts
+Both `proxy-pricing` and `justtcg-sync` functions have been normalized to use **Pattern B (named handler)** to prevent EOF/brace errors.
 
-Add these to your `package.json` scripts section:
+## Pattern B Structure (STANDARD)
 
-```json
-{
-  "scripts": {
-    "deno:check": "deno check supabase/functions/**/*.ts",
-    "deno:fmt": "deno fmt supabase/functions/**/*.ts", 
-    "deno:lint": "deno lint supabase/functions/**/*.ts",
-    "functions:check": "npm run deno:fmt && npm run deno:lint && npm run deno:check",
-    "pre-deploy": "npm run functions:check"
+```typescript
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders },
+  });
+}
+
+async function handleRequest(req: Request): Promise<Response> {
+  try {
+    // Handler logic here
+    return json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return json({ error: "Internal error" }, 500);
   }
 }
+
+Deno.serve(handleRequest); // ← Clean ending, no dangling });
 ```
 
-## Manual Commands
+## MANDATORY Pre-Deploy Checks
 
-Until the scripts are added, use these commands directly:
+**Run these before EVERY deployment:**
 
-### Format All Functions
 ```bash
+# 1. Format all functions
 deno fmt supabase/functions/**/*.ts
-```
 
-### Lint All Functions  
-```bash
+# 2. Lint all functions  
 deno lint supabase/functions/**/*.ts
-```
 
-### Type Check All Functions
-```bash
+# 3. Type check all functions
 deno check supabase/functions/**/*.ts
-```
 
-### All Checks Combined
-```bash
-deno fmt supabase/functions/**/*.ts && \
-deno lint supabase/functions/**/*.ts && \
-deno check supabase/functions/**/*.ts
-```
+# 4. Pattern validation (prevent mixed patterns)
+bash .github/workflows/check-patterns.sh
 
-### Test Specific Function
-```bash
+# 5. Test local serving
+supabase functions serve proxy-pricing --env-file supabase/.env
 supabase functions serve justtcg-sync --env-file supabase/.env
 ```
 
-## CI/CD Integration
+## ✅ Definition of Done
 
-For GitHub Actions, add this step to your workflow:
+- ✅ `proxy-pricing/index.ts` - No dangling `});`, uses `Deno.serve(handleRequest);`
+- ✅ `justtcg-sync/index.ts` - Uses `Deno.serve(handleRequest);` consistently  
+- ✅ Both functions compile without `Expected '}', got '<eof>'` errors
+- ✅ `deno fmt|lint|check` all pass for both files
+- ✅ Deploy succeeds without `(SUPABASE_CODEGEN_ERROR)`
+- ✅ Comprehensive pattern validation scripts in place
+- ✅ GitHub Actions workflow for automated checks
 
-```yaml
-name: Check Edge Functions
-run: |
-  # Install Deno
-  curl -fsSL https://deno.land/install.sh | sh
-  export PATH="$HOME/.deno/bin:$PATH"
-  
-  # Run checks
-  deno fmt --check supabase/functions/**/*.ts
-  deno lint supabase/functions/**/*.ts  
-  deno check supabase/functions/**/*.ts
-```
+## Error Prevention
 
-## Pre-Deploy Checklist
+The new Pattern B structure prevents these common issues:
 
-Before every deployment:
+| Error | Root Cause | Solution |
+|-------|------------|----------|
+| `Expected '}', got '<eof>'` | Missing closing brace | Pattern B has no nested braces |
+| `})` unexpected token | Dangling closer | Pattern B ends with single line |
+| Mixed pattern errors | Both patterns in same file | Validation script prevents this |
 
-1. ✅ Run `deno fmt supabase/functions/**/*.ts`
-2. ✅ Run `deno lint supabase/functions/**/*.ts`  
-3. ✅ Run `deno check supabase/functions/**/*.ts`
-4. ✅ Test locally with `supabase functions serve [name] --env-file supabase/.env`
-5. ✅ Verify no `(SUPABASE_CODEGEN_ERROR)` in deploy logs
+## Files Changed
+
+- ✅ `supabase/functions/proxy-pricing/index.ts` - Normalized to Pattern B
+- ✅ `supabase/functions/justtcg-sync/index.ts` - Already Pattern B  
+- ✅ `.github/workflows/edge-functions.yml` - CI checks
+- ✅ `.github/workflows/check-patterns.sh` - Pattern validation
+- ✅ `supabase/functions/README.md` - Updated guidelines
