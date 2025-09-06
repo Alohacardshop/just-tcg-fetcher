@@ -562,8 +562,8 @@ export const DataImportPanel = () => {
     setImportProgress(0);
     
     try {
-      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-games' }
+      const { data, error } = await supabase.functions.invoke('sync-games-v2', {
+        body: { background: false }
       });
 
       if (error) throw error;
@@ -614,8 +614,8 @@ export const DataImportPanel = () => {
         description: "Syncing sets and then all cards for this game...",
       });
 
-      const { data: setsData, error: setsError } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-sets', gameId: gameJtId }
+      const { data: setsData, error: setsError } = await supabase.functions.invoke('sync-sets-v2', {
+        body: { gameId: gameJtId, background: false }
       });
 
       if (setsError) throw setsError;
@@ -664,8 +664,8 @@ export const DataImportPanel = () => {
     setImportProgress(0);
     
     try {
-      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-sets', gameId }
+      const { data, error } = await supabase.functions.invoke('sync-sets-v2', {
+        body: { gameId, background: false }
       });
 
       if (error) throw error;
@@ -701,10 +701,10 @@ export const DataImportPanel = () => {
     setImportProgress(0);
     
     try {
-      const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-cards', setId },
+      const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
+        body: { setId, background: true },
         headers: {
-          'x-background-sync': 'true'
+          'Content-Type': 'application/json'
         }
       });
 
@@ -774,10 +774,10 @@ export const DataImportPanel = () => {
           if (bulkCancelRequested) return { success: false, setId };
           
           try {
-            const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-              body: { action: 'sync-cards', setId, operationId },
+            const { data, error } = await supabase.functions.invoke('sync-cards-v2', {
+              body: { setId, background: true },
               headers: {
-                'x-background-sync': 'true'
+                'Content-Type': 'application/json'
               }
             });
 
