@@ -496,9 +496,8 @@ async function routeRequest(req: Request): Promise<Response> {
   }
 }
 
-// ===== CANONICAL TAIL (balanced braces; no stray closers) =====
-
-async function handleRequest(req: Request): Promise<Response> {
+// ===== CANONICAL TAIL (inline; balanced) =====
+Deno.serve(async (req: Request): Promise<Response> => {
   try {
     return await routeRequest(req);
   } catch (error) {
@@ -508,7 +507,4 @@ async function handleRequest(req: Request): Promise<Response> {
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
-}
-
-// Important: there must be NOTHING after this line. No extra "});".
-Deno.serve(handleRequest);
+}); // <— this MUST be the final characters; nothing after this line

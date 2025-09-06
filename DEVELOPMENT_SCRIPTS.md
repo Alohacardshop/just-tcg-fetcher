@@ -1,8 +1,8 @@
 # Edge Functions Development Guide
 
-## ✅ NORMALIZED: All functions now use Pattern B
+## ✅ NORMALIZED: Functions use consistent patterns
 
-Both `proxy-pricing` and `justtcg-sync` functions have been normalized to use **Pattern B (named handler)** to prevent EOF/brace errors.
+`proxy-pricing` uses **Pattern A (inline callback)** and `justtcg-sync` uses **Pattern B (named handler)** to prevent EOF/brace errors.
 
 ## Pattern B Structure (STANDARD)
 
@@ -49,17 +49,18 @@ supabase functions serve proxy-pricing --env-file supabase/.env
 supabase functions serve justtcg-sync --env-file supabase/.env
 ```
 
-## ✅ FIXED: Canonical Structure Applied
+## ✅ FIXED: Pattern A (Inline Callback) Applied
 
-**proxy-pricing/index.ts** has been rewritten with the canonical tail pattern:
+**proxy-pricing/index.ts** now uses Pattern A with clean inline callback:
 
 ```typescript
 async function routeRequest(req: Request): Promise<Response> {
-  // All business logic here - no nested blocks
+  // All business logic here
   return json({ success: true });
 }
 
-async function handleRequest(req: Request): Promise<Response> {
+// ===== CANONICAL TAIL (inline; balanced) =====
+Deno.serve(async (req: Request): Promise<Response> => {
   try {
     return await routeRequest(req);
   } catch (error) {
@@ -69,26 +70,30 @@ async function handleRequest(req: Request): Promise<Response> {
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
-}
-
-// Clean ending - no dangling });
-Deno.serve(handleRequest);
+}); // ← Final characters, nothing after this line
 ```
+
+## Pattern Consistency
+
+- ✅ **proxy-pricing/index.ts**: Pattern A (inline callback, ends with `});`)
+- ✅ **justtcg-sync/index.ts**: Pattern B (named handler, ends with `;`)
+- ✅ Both patterns are valid and prevent EOF/brace errors
+- ✅ No mixed patterns within the same file
 
 ## Error Prevention
 
-The new Pattern B structure prevents these common issues:
+Both Pattern A and Pattern B prevent these common issues:
 
-| Error | Root Cause | Solution |
-|-------|------------|----------|
-| `Expected '}', got '<eof>'` | Missing closing brace | Pattern B has no nested braces |
-| `})` unexpected token | Dangling closer | Pattern B ends with single line |
-| Mixed pattern errors | Both patterns in same file | Validation script prevents this |
-| Complex nesting issues | Deep function callbacks | Separate route handler eliminates nesting |
+| Error | Root Cause | Pattern A Solution | Pattern B Solution |
+|-------|------------|-------------------|-------------------|
+| `Expected '}', got '<eof>'` | Missing closing brace | Single `});` closer | No nested braces |
+| `})` unexpected token | Dangling closer | Clean `});` ending | Single line ending |
+| Mixed pattern errors | Both patterns in same file | Validation prevents mixing | Validation prevents mixing |
+| Complex nesting issues | Deep callbacks | Separate route handler | Separate route handler |
 
 ## Files Changed
 
-- ✅ `supabase/functions/proxy-pricing/index.ts` - Normalized to Pattern B
+- ✅ `supabase/functions/proxy-pricing/index.ts` - Normalized to Pattern A (inline)
 - ✅ `supabase/functions/justtcg-sync/index.ts` - Already Pattern B  
 - ✅ `.github/workflows/edge-functions.yml` - CI checks
 - ✅ `.github/workflows/check-patterns.sh` - Pattern validation
