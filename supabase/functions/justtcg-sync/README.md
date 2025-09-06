@@ -120,3 +120,44 @@ This prevents confusion and guides users to the correct game for syncing English
 - All JustTCG API calls are server-side only
 - API keys are never exposed to the browser
 - Normalized header usage prevents case-sensitivity issues
+
+## Dev Checks
+
+Run these commands before deploying to catch syntax/formatting issues:
+
+```bash
+# Format code
+deno fmt supabase/functions/justtcg-sync/index.ts
+
+# Lint for style issues  
+deno lint supabase/functions/justtcg-sync/index.ts
+
+# Type checking
+deno check supabase/functions/justtcg-sync/index.ts
+
+# Test local function serving
+supabase functions serve justtcg-sync --env-file supabase/.env
+
+# Run all checks at once
+npm run functions:check
+```
+
+### Guardrails Against EOF/Brace Errors
+
+The function now uses `Deno.serve(handleRequest)` pattern to prevent mismatched braces:
+
+```typescript
+// ✅ GOOD: Proper closure with named handler
+async function handleRequest(req: Request): Promise<Response> {
+  // ... handler logic
+  return json(result);
+}
+
+Deno.serve(handleRequest); // Single line, no braces to mismatch
+```
+
+**Always run `npm run pre-deploy` before deploying** to catch:
+- Missing closing braces
+- EOF syntax errors  
+- TypeScript compilation issues
+- Formatting inconsistencies
