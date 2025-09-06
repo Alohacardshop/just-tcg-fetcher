@@ -1,0 +1,1 @@
+UPDATE sync_control SET should_cancel = false WHERE should_cancel = true;
