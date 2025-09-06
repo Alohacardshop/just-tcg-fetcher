@@ -401,6 +401,123 @@ export class JustTCGClient {
     console.log(`   Expected total: ${expectedTotal || 'unknown'}`);
     console.log(`   Pagination mode: ${paginationMode}`);
   }
+
+  /**
+   * Fetch sealed products for a given game and set
+   */
+  async* getSealedProducts(gameId: string, setId: string, pageSize = 100, supabaseClient?: any): AsyncGenerator<any[], void, unknown> {
+    console.log(`📦 Starting sealed products fetch for ${gameId}/${setId} (pageSize: ${pageSize})`);
+    
+    const normalizedGameId = normalizeGameSlug(gameId);
+    
+    // Enhanced set resolution for sealed products
+    const { code: resolvedSetCode, source } = await this.resolveSetCode(gameId, setId, supabaseClient);
+    console.log(`🎯 Set resolution for sealed: "${setId}" → "${resolvedSetCode}" (source: ${source})`);
+    
+    let offset = 0;
+    let page = 1;
+    let hasMore = true;
+    let pageCount = 0;
+    let paginationMode: 'offset' | 'page' = 'offset';
+    
+    while (hasMore) {
+      pageCount++;
+      const startTime = Date.now();
+      
+      try {
+        console.log(`📦 Fetching sealed products page ${pageCount} (${paginationMode} mode)`);
+        
+        let params: Record<string, string | number>;
+        let url: string;
+        
+        if (paginationMode === 'offset') {
+          params = {
+            game: normalizedGameId,
+            set: resolvedSetCode,
+            limit: pageSize,
+            offset: offset
+          };
+          url = buildUrl('sealed', params);
+        } else {
+          params = {
+            game: normalizedGameId,
+            set: resolvedSetCode,
+            pageSize: pageSize,
+            page: page
+          };
+          url = buildUrl('sealed', params);
+        }
+        
+        console.log(`📡 API call (sealed ${paginationMode} mode): ${url}`);
+        
+        const response = await fetchJsonWithRetry(url);
+        const duration = Date.now() - startTime;
+        
+        // Extract data with defensive guards
+        let pageData: any[] = [];
+        if (response && typeof response === 'object') {
+          const rawData = response.data || response.sealed || response.products || response.items || [];
+          pageData = Array.isArray(rawData) ? rawData : [];
+        }
+        
+        // If first attempt with offset fails and returns 0 products, try page mode
+        if (pageCount === 1 && pageData.length === 0 && paginationMode === 'offset') {
+          console.log(`🔄 No sealed products with offset mode, trying page/pageSize mode`);
+          paginationMode = 'page';
+          continue;
+        }
+        
+        console.log(`✅ Sealed page ${pageCount} processed: ${pageData.length} products (${duration}ms)`);
+        
+        // Always yield an array, even if empty
+        yield pageData;
+        
+        // Check for end conditions
+        if (pageData.length === 0) {
+          console.log(`📭 Empty sealed page received, stopping pagination`);
+          break;
+        }
+        
+        // Fallback: if we got fewer items than requested, assume we're done
+        if (pageData.length < pageSize) {
+          console.log(`🏁 Partial sealed page (${pageData.length}/${pageSize}), assuming end of data`);
+          hasMore = false;
+          break;
+        }
+        
+        // Update pagination parameters
+        if (paginationMode === 'offset') {
+          offset += pageData.length;
+        } else {
+          page += 1;
+        }
+        
+        // Safety check: prevent infinite loops
+        if (pageCount > 100) {
+          console.warn(`⚠️ Safety break: too many sealed pages (${pageCount}), stopping`);
+          break;
+        }
+        
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        console.error(`❌ Error fetching sealed page ${pageCount} (${duration}ms):`, error.message || error);
+        
+        // For first page errors, try switching pagination mode once
+        if (pageCount === 1 && paginationMode === 'offset') {
+          console.log(`🔄 First sealed page failed with offset, trying page mode`);
+          paginationMode = 'page';
+          continue;
+        }
+        
+        // For transient errors, yield empty and stop
+        console.error(`❌ Stopping sealed pagination due to error`);
+        yield [];
+        break;
+      }
+    }
+    
+    console.log(`📊 Sealed products pagination complete: ${pageCount} pages processed`);
+  }
 }
 
 // ===== SYNC MANAGER =====
@@ -845,16 +962,18 @@ async function syncCardsV2(
               variants.forEach(variant => {
                 const safeVariant = variant && typeof variant === 'object' ? variant : {};
                 
-                // Only create price record if we have actual pricing data
-                if (safeVariant.price || safeVariant.market_price || safeVariant.low_price || safeVariant.high_price) {
+                // Check for pricing data using JustTCG field names
+                const hasPrice = safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d;
+                
+                if (hasPrice) {
                   variantPrices.push({
                     card_id: cardRecord.id,
                     condition: typeof safeVariant.condition === 'string' ? safeVariant.condition : 'Unknown',
                     variant: typeof safeVariant.printing === 'string' ? safeVariant.printing : 'Unknown',
-                    market_price: typeof safeVariant.market_price === 'number' ? safeVariant.market_price : safeVariant.price,
-                    low_price: typeof safeVariant.low_price === 'number' ? safeVariant.low_price : null,
-                    high_price: typeof safeVariant.high_price === 'number' ? safeVariant.high_price : null,
-                    currency: typeof safeVariant.currency === 'string' ? safeVariant.currency : 'USD',
+                    market_price: safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d || null,
+                    low_price: safeVariant.minPrice30d || safeVariant.minPrice7d || null,
+                    high_price: safeVariant.maxPrice30d || safeVariant.maxPrice7d || null,
+                    currency: 'USD',
                     source: 'JustTCG',
                     fetched_at: new Date().toISOString(),
                     created_at: new Date().toISOString(),
@@ -890,6 +1009,122 @@ async function syncCardsV2(
         }
       );
     }
+
+    // ===== C. SEALED PRODUCTS SYNCHRONIZATION =====
+    console.log(`📦 Starting sealed products sync for ${gameId}/${setId}`);
+    let sealedProcessed = 0;
+    let sealedPagesProcessed = 0;
+    
+    for await (const sealedPage of justTCGClient.getSealedProducts(gameId, setId, 100, supabaseClient)) {
+      const safePage = Array.isArray(sealedPage) ? sealedPage : [];
+      sealedPagesProcessed++;
+      
+      console.log(`📦 Processing sealed page ${sealedPagesProcessed}: ${safePage.length} products`);
+      
+      if (safePage.length > 0) {
+        // Process sealed products in batches
+        await syncManager.batchProcess(
+          safePage,
+          async (sealedBatch) => {
+            const safeBatch = Array.isArray(sealedBatch) ? sealedBatch : [];
+            
+            if (safeBatch.length === 0) return;
+
+            // Transform sealed products with defensive guards
+            const transformedSealed = safeBatch.map(product => {
+              const safeProduct = product && typeof product === 'object' ? product : {};
+              
+              return {
+                jt_product_id: typeof safeProduct.id === 'string' ? safeProduct.id : `unknown_sealed_${Date.now()}_${Math.random()}`,
+                name: typeof safeProduct.name === 'string' ? safeProduct.name : 'Unknown Product',
+                set_id: setData.id,
+                game_id: setData.game_id,
+                image_url: typeof safeProduct.image === 'string' ? safeProduct.image : null,
+                product_type: typeof safeProduct.type === 'string' ? safeProduct.type : 'Unknown',
+                data: safeProduct,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              };
+            });
+
+            // Insert/update sealed products
+            const { data: upsertedSealed, error: sealedError } = await supabaseClient
+              .from('sealed_products')
+              .upsert(transformedSealed, { 
+                onConflict: 'jt_product_id',
+                ignoreDuplicates: false 
+              })
+              .select('id, jt_product_id');
+
+            if (sealedError) {
+              console.error('❌ Error upserting sealed products batch:', sealedError);
+              throw sealedError;
+            }
+
+            // Extract and insert sealed pricing data
+            const sealedPrices: any[] = [];
+            const safeUpsertedSealed = Array.isArray(upsertedSealed) ? upsertedSealed : [];
+            
+            safeBatch.forEach((product, index) => {
+              const safeProduct = product && typeof product === 'object' ? product : {};
+              const variants = Array.isArray(safeProduct.variants) ? safeProduct.variants : [];
+              const productRecord = safeUpsertedSealed[index];
+              
+              if (productRecord && variants.length > 0) {
+                variants.forEach(variant => {
+                  const safeVariant = variant && typeof variant === 'object' ? variant : {};
+                  
+                  const hasPrice = safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d;
+                  
+                  if (hasPrice) {
+                    sealedPrices.push({
+                      product_id: productRecord.id,
+                      condition: typeof safeVariant.condition === 'string' ? safeVariant.condition : 'Unknown',
+                      variant: typeof safeVariant.printing === 'string' ? safeVariant.printing : 'Unknown',
+                      market_price: safeVariant.price || safeVariant.avgPrice || safeVariant.avgPrice30d || null,
+                      low_price: safeVariant.minPrice30d || safeVariant.minPrice7d || null,
+                      high_price: safeVariant.maxPrice30d || safeVariant.maxPrice7d || null,
+                      currency: 'USD',
+                      source: 'JustTCG',
+                      fetched_at: new Date().toISOString(),
+                      created_at: new Date().toISOString(),
+                      updated_at: new Date().toISOString()
+                    });
+                  }
+                });
+              }
+            });
+
+            // Insert sealed prices if we have any
+            if (sealedPrices.length > 0) {
+              const { error: sealedPriceError } = await supabaseClient
+                .from('sealed_prices')
+                .upsert(sealedPrices, { 
+                  onConflict: 'product_id,condition,variant',
+                  ignoreDuplicates: false 
+                });
+
+              if (sealedPriceError) {
+                console.warn('⚠️ Error upserting sealed prices:', sealedPriceError.message);
+              } else {
+                console.log(`💰 Inserted ${sealedPrices.length} sealed price records`);
+              }
+            }
+
+            sealedProcessed += safeBatch.length;
+            console.log(`✅ Processed sealed batch: ${safeBatch.length} products, ${sealedPrices.length} price records (total: ${sealedProcessed})`);
+          }
+        );
+      }
+      
+      // Check for cancellation between sealed pages
+      if (await syncManager.shouldCancel(operationId)) {
+        console.log(`⚠️ Sealed sync cancelled at page ${sealedPagesProcessed}`);
+        break;
+      }
+    }
+
+    console.log(`📦 Sealed products sync complete: ${sealedProcessed} products, ${sealedPagesProcessed} pages`);
 
     // Final validation and status update with defensive guards
     const finalProcessedCount = processedCards?.length ?? 0;
