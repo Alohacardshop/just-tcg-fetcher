@@ -790,7 +790,7 @@ async function syncCardsV2(
         throw new Error(errorMsg);
       }
 
-      // Process cards in batches with defensive guards
+      // Process cards in batches with variant extraction
       await syncManager.batchProcess(
         page,
         async (cardsBatch) => {
@@ -825,19 +825,68 @@ async function syncCardsV2(
               onConflict: 'jt_card_id',
               ignoreDuplicates: false 
             })
-            .select('id');
+            .select('id, jt_card_id');
 
           if (upsertError) {
             console.error('❌ Error upserting cards batch:', upsertError);
             throw upsertError;
           }
 
-          // Accumulate processed cards with defensive guards
+          // Extract and insert variant pricing data
+          const variantPrices: any[] = [];
           const safeUpserted = Array.isArray(upsertedCards) ? upsertedCards : [];
+          
+          safeBatch.forEach((card, index) => {
+            const safeCard = card && typeof card === 'object' ? card : {};
+            const variants = Array.isArray(safeCard.variants) ? safeCard.variants : [];
+            const cardRecord = safeUpserted[index];
+            
+            if (cardRecord && variants.length > 0) {
+              variants.forEach(variant => {
+                const safeVariant = variant && typeof variant === 'object' ? variant : {};
+                
+                // Only create price record if we have actual pricing data
+                if (safeVariant.price || safeVariant.market_price || safeVariant.low_price || safeVariant.high_price) {
+                  variantPrices.push({
+                    card_id: cardRecord.id,
+                    condition: typeof safeVariant.condition === 'string' ? safeVariant.condition : 'Unknown',
+                    variant: typeof safeVariant.printing === 'string' ? safeVariant.printing : 'Unknown',
+                    market_price: typeof safeVariant.market_price === 'number' ? safeVariant.market_price : safeVariant.price,
+                    low_price: typeof safeVariant.low_price === 'number' ? safeVariant.low_price : null,
+                    high_price: typeof safeVariant.high_price === 'number' ? safeVariant.high_price : null,
+                    currency: typeof safeVariant.currency === 'string' ? safeVariant.currency : 'USD',
+                    source: 'JustTCG',
+                    fetched_at: new Date().toISOString(),
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                  });
+                }
+              });
+            }
+          });
+
+          // Insert variant prices if we have any
+          if (variantPrices.length > 0) {
+            const { error: priceError } = await supabaseClient
+              .from('card_prices')
+              .upsert(variantPrices, { 
+                onConflict: 'card_id,condition,variant',
+                ignoreDuplicates: false 
+              });
+
+            if (priceError) {
+              console.warn('⚠️ Error upserting variant prices:', priceError.message);
+              // Don't throw - card insertion was successful, just variant pricing failed
+            } else {
+              console.log(`💰 Inserted ${variantPrices.length} variant price records`);
+            }
+          }
+
+          // Accumulate processed cards with defensive guards
           processedCards.push(...safeUpserted);
           processed += safeBatch.length;
           
-          console.log(`✅ Processed batch: ${safeBatch.length} cards (total processed: ${processed})`);
+          console.log(`✅ Processed batch: ${safeBatch.length} cards, ${variantPrices.length} variant prices (total processed: ${processed})`);
         }
       );
     }
