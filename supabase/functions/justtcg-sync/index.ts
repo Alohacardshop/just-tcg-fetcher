@@ -349,15 +349,18 @@ async function syncCards(supabaseClient: any, setId: string) {
     console.log(`🃏 Fetching all cards for set: ${setName} in game: ${normalizedGameId}`);
     console.log(`🔍 Calling listAllCardsBySet with params:`, { gameId: normalizedGameId, setId: setName });
     
+    // Define outside try so they're available later
+    let allCards: any[] = [];
+    let cardsMeta: any = undefined;
     try {
       const cardsResult = await listAllCardsBySet({ 
         gameId: normalizedGameId, 
         setId: setName 
       });
       
-      // Fix destructuring - listAllCardsBySet returns { items, meta }
-      const allCards = cardsResult.items || [];
-      const cardsMeta = cardsResult.meta;
+      // listAllCardsBySet returns { items, meta }
+      allCards = cardsResult.items || [];
+      cardsMeta = cardsResult.meta;
       
       console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
       console.log(`🔍 cardsResult structure:`, { 
