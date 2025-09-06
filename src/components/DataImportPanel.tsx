@@ -167,45 +167,68 @@ export const DataImportPanel = () => {
 
   // Emergency stop all operations
   const handleEmergencyStop = async () => {
+    console.log('🚨 EMERGENCY STOP ACTIVATED');
+    
     try {
-      // Stop everything immediately
+      // IMMEDIATE CLIENT-SIDE STOP
       setBulkCancelRequested(true);
       setIsImporting(false);
       setBulkProgress(null);
       setCurrentOperationId(null);
       
-      // Clear all sync control records
-      await supabase
-        .from('sync_control')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all records
+      // Try to clear sync control records (may fail due to constraints)
+      try {
+        await supabase
+          .from('sync_control')
+          .delete()
+          .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()); // Delete last 24h
+      } catch (dbError) {
+        console.log('DB cleanup failed, continuing with local stop');
+      }
       
-      // Insert a global stop signal
-      await supabase
-        .from('sync_control')
-        .upsert({
-          operation_type: 'emergency_stop',
-          operation_id: 'global_stop_' + Date.now(),
-          should_cancel: true,
-          created_by: user?.id
-        });
+      // Try to insert new stop signal with unique ID
+      try {
+        await supabase
+          .from('sync_control')
+          .insert({
+            operation_type: 'emergency_stop',
+            operation_id: 'emergency_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+            should_cancel: true,
+            created_by: user?.id
+          });
+      } catch (dbError) {
+        console.log('Stop signal failed, but local operations are stopped');
+      }
         
       toast({
-        title: "Emergency Stop",
+        title: "🚨 EMERGENCY STOP ACTIVATED",
         description: "All operations halted immediately",
+        variant: "destructive",
       });
+      
+      // Force page refresh after 2 seconds to clear any stuck states
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+      
     } catch (error) {
       console.error('Emergency stop error:', error);
-      // Force stop locally regardless
+      
+      // GUARANTEED LOCAL STOP regardless of any failures
       setBulkCancelRequested(true);
       setIsImporting(false);
       setBulkProgress(null);
       setCurrentOperationId(null);
       
       toast({
-        title: "Emergency Stop",
-        description: "Operations stopped locally",
+        title: "🚨 FORCE STOPPED",
+        description: "Operations stopped locally. Refreshing page...",
       });
+      
+      // Force refresh on any error
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
     }
   };
 
@@ -637,15 +660,25 @@ export const DataImportPanel = () => {
   };
 
   const handleCancelBulkSync = () => {
+    console.log('🛑 CANCEL SYNC ACTIVATED');
+    
+    // IMMEDIATE STOP
     setBulkCancelRequested(true);
     setIsImporting(false);
     setBulkProgress(null);
     setCurrentOperationId(null);
     
     toast({
-      title: "Sync Cancelled",
-      description: "All operations stopped immediately",
+      title: "🛑 SYNC STOPPED",
+      description: "All operations cancelled immediately",
     });
+    
+    // Optional: Force refresh after 1 second to clear any stuck state
+    setTimeout(() => {
+      if (isImporting || bulkProgress) {
+        window.location.reload();
+      }
+    }, 1000);
   };
 
   const handleGameExpand = (gameId: string) => {
@@ -780,6 +813,40 @@ export const DataImportPanel = () => {
 
   return (
     <div className="space-y-6">
+      {/* Emergency Controls - Always Visible During Operations */}
+      {(isImporting || bulkProgress || currentOperationId) && (
+        <Card className="bg-red-50 border-red-200 shadow-card">
+          <div className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-red-500" />
+                <h3 className="text-lg font-semibold text-red-700">Operations Running</h3>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleCancelBulkSync}
+                  size="sm"
+                  variant="outline"
+                  className="border-yellow-500 text-yellow-600 hover:bg-yellow-50"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Stop Now
+                </Button>
+                <Button
+                  onClick={handleEmergencyStop}
+                  size="sm"
+                  variant="destructive"
+                  className="bg-red-500 hover:bg-red-600 text-white"
+                >
+                  <AlertTriangle className="h-4 w-4 mr-2" />
+                  EMERGENCY STOP
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+      
       {/* API Status */}
       <Card className="bg-gradient-card border-border shadow-card">
         <div className="p-6 space-y-4">
