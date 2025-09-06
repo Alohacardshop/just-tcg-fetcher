@@ -5,19 +5,45 @@ import { updateApiInspectorData } from '@/components/ApiInspector';
 
 interface UsePricingOptions {
   cardId?: string;
+  tcgplayerId?: string;
+  variantId?: string;
   condition?: string;
   printing?: string;
   autoFetch?: boolean;
 }
 
 interface PricingData {
+  card_id?: string;
+  variant?: string;
+  condition?: string;
   market_price?: number;
   low_price?: number;
   high_price?: number;
   currency?: string;
-  variant?: string;
-  condition?: string;
   fetched_at?: string;
+  // New: support for multiple variants response
+  data?: Array<{
+    id: string;
+    name: string;
+    game?: string;
+    set?: string;
+    number?: string;
+    tcgplayerId?: string;
+    rarity?: string;
+    details?: string;
+    variants: Array<{
+      id: string;
+      printing: string;
+      condition: string;
+      price?: number;
+      market_price?: number;
+      low_price?: number;
+      high_price?: number;
+      currency?: string;
+      lastUpdated?: string;
+    }>;
+  }>;
+  allVariants?: boolean;
 }
 
 interface UsePricingReturn {
@@ -31,6 +57,8 @@ interface UsePricingReturn {
 
 export function usePricing({
   cardId,
+  tcgplayerId,
+  variantId,
   condition = 'Near Mint',
   printing = 'Normal',
   autoFetch = true
@@ -43,12 +71,13 @@ export function usePricing({
   const { toast } = useToast();
 
   const fetchPricing = async (options: { refresh?: boolean } = {}) => {
-    // Early validation: block if no JustTCG card ID
-    if (!cardId?.trim()) {
-      const message = 'JustTCG card ID is required before fetching pricing';
+    // Early validation: block if no card identifier provided
+    const primaryId = cardId || tcgplayerId || variantId;
+    if (!primaryId?.trim()) {
+      const message = 'Card identifier (cardId, tcgplayerId, or variantId) is required before fetching pricing';
       setError(message);
       
-      console.warn('⚠️ Pricing fetch blocked: missing JustTCG card ID');
+      console.warn('⚠️ Pricing fetch blocked: missing card identifier');
       return;
     }
 
@@ -56,7 +85,7 @@ export function usePricing({
     setError(null);
     setNoVariants(false);
     
-    const requestPayload = { cardId, condition, printing, refresh: options.refresh || false };
+    const requestPayload = { cardId, tcgplayerId, variantId, condition, printing, refresh: options.refresh || false };
     console.log(`🔄 Fetching pricing with payload:`, requestPayload);
 
     try {
@@ -83,8 +112,8 @@ export function usePricing({
         console.error('❌ Pricing error:', errorMessage);
         
         // Special handling for 404 - no variants available
-        if (data?.status === 404 || errorMessage.toLowerCase().includes('no pricing')) {
-          console.log(`📭 No variants available for: ${cardId} (${condition}, ${printing})`);
+        if (data?.status === 404 || errorMessage.toLowerCase().includes('no pricing') || errorMessage.toLowerCase().includes('no variants')) {
+          console.log(`📭 No variants available for: ${primaryId} (${condition}, ${printing})`);
           setNoVariants(true);
           setPricing(null);
           
@@ -102,9 +131,9 @@ export function usePricing({
       setNoVariants(false);
       
       if (data.cached) {
-        console.log(`📋 Loaded cached pricing for: ${cardId}`);
+        console.log(`📋 Loaded cached pricing for: ${primaryId}`);
       } else {
-        console.log(`✅ Fetched fresh pricing for: ${cardId}`);
+        console.log(`✅ Fetched fresh pricing for: ${primaryId}`);
         toast({
           title: "Pricing Updated",
           description: `Fresh pricing data fetched for ${condition} condition.`,
@@ -129,12 +158,13 @@ export function usePricing({
     }
   };
 
-  // Auto-fetch when dependencies change (if enabled and cardId is available)
+  // Auto-fetch when dependencies change (if enabled and card identifier is available)
   useEffect(() => {
-    if (autoFetch && cardId?.trim()) {
+    const primaryId = cardId || tcgplayerId || variantId;
+    if (autoFetch && primaryId?.trim()) {
       fetchPricing();
     }
-  }, [cardId, condition, printing, autoFetch]);
+  }, [cardId, tcgplayerId, variantId, condition, printing, autoFetch]);
 
   return {
     pricing,

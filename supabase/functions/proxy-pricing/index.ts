@@ -376,7 +376,9 @@ const corsHeaders = {
 };
 
 interface PricingRequest {
-  cardId: string;
+  cardId?: string;
+  tcgplayerId?: string;
+  variantId?: string;
   condition?: string;
   printing?: string;
   refresh?: boolean;
@@ -400,6 +402,10 @@ serve(async (req) => {
     const timer = createTimer();
     timer.start();
     
+    // Parse request body
+    const body = await req.json();
+    const { cardId, tcgplayerId, variantId, condition, printing, refresh } = body;
+    
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -421,114 +427,105 @@ serve(async (req) => {
     }
 
     // Log the complete request payload for debugging
-    const requestPayload = { cardId, condition, printing, refresh };
+    const requestPayload = { cardId, tcgplayerId, variantId, condition, printing, refresh };
     logStructured('info', 'Pricing request started', {
       operation,
       ...requestPayload
     });
     console.log(`🏷️ Pricing request payload:`, requestPayload);
     
-    if (!cardId) {
+    // Determine which identifier to use (ID takes precedence)
+    const primaryId = cardId || tcgplayerId || variantId;
+    const hasIdParam = !!primaryId;
+    
+    if (!hasIdParam) {
       const duration = timer.end();
-      logStructured('error', 'Missing cardId in request payload', {
+      logStructured('error', 'Missing card identifier in request payload', {
         operation,
         duration,
-        error: 'JustTCG card ID is required'
+        error: 'Card ID (cardId, tcgplayerId, or variantId) is required'
       });
-      console.error('❌ Missing cardId in request payload');
+      console.error('❌ Missing card identifier in request payload');
       return new Response(
-        JSON.stringify({ success: false, error: 'JustTCG card ID is required', status: 400 }),
+        JSON.stringify({ success: false, error: 'Card ID (cardId, tcgplayerId, or variantId) is required', status: 400 }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // First, get the card details to extract game and set info
-    const { data: cardData, error: cardError } = await supabaseClient
-      .from('cards')
-      .select(`
-        jt_card_id,
-        name,
-        sets!inner(name, games!inner(jt_game_id))
-      `)
-      .eq('jt_card_id', cardId)
-      .maybeSingle();
+    console.log(`🆔 Using card identifier: ${primaryId} (type: ${cardId ? 'cardId' : tcgplayerId ? 'tcgplayerId' : 'variantId'})`);
 
-    if (cardError || !cardData) {
-      const duration = timer.end();
-      logStructured('error', 'Card not found in database', {
-        operation,
-        cardId,
-        duration,
-        error: `Card not found: ${cardId}`
-      });
-      console.error('❌ Card not found for cardId:', cardId);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: `Card not found: ${cardId}`, 
-          status: 404 
-        }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const gameId = cardData.sets.games.jt_game_id;
-    const setName = cardData.sets.name;
-    const cardName = cardData.name;
-
-    // Check if we have recent cached pricing (unless refresh is requested)
-    if (!refresh) {
-      const cacheTimer = createTimer();
-      cacheTimer.start();
+    // If specific condition/printing requested and cached data exists, check cache first
+    if (!refresh && condition && printing) {
+      // First, get the card details to extract internal ID for cache lookup
+      let internalCardId = null;
       
-      const cacheTimeLimit = new Date(Date.now() - 30 * 60 * 1000); // 30 minutes
-      
-      const { data: cachedPrice, error: cacheError } = await supabaseClient
-        .from('card_prices')
-        .select('*')
-        .eq('card_id', cardData.jt_card_id)
-        .eq('condition', condition)
-        .eq('variant', printing)
-        .eq('source', 'JustTCG')
-        .gte('fetched_at', cacheTimeLimit.toISOString())
-        .order('fetched_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      const cacheDuration = cacheTimer.end();
-      
-      if (!cacheError && cachedPrice) {
-        const totalDuration = timer.end();
-        logStructured('info', 'Using cached pricing', {
-          operation,
-          cardId,
-          condition,
-          printing,
-          cached: true,
-          cacheDuration,
-          totalDuration
-        });
-        console.log(`📋 Using cached pricing for card: ${cardId}`);
-        return new Response(
-          JSON.stringify({ 
-            success: true, 
-            pricing: cachedPrice,
-            cached: true 
-          }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      if (cardId) {
+        const { data: cardData } = await supabaseClient
+          .from('cards')
+          .select('jt_card_id')
+          .eq('jt_card_id', cardId)
+          .maybeSingle();
+        internalCardId = cardData?.jt_card_id;
       }
-    }
+      
+      if (internalCardId) {
+        const cacheTimer = createTimer();
+        cacheTimer.start();
+        
+        const cacheTimeLimit = new Date(Date.now() - 30 * 60 * 1000); // 30 minutes
+        
+        const { data: cachedPrice, error: cacheError } = await supabaseClient
+          .from('card_prices')
+          .select('*')
+          .eq('card_id', internalCardId)
+          .eq('condition', condition)
+          .eq('variant', printing)
+          .eq('source', 'JustTCG')
+          .gte('fetched_at', cacheTimeLimit.toISOString())
+          .order('fetched_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-    // Fetch fresh pricing from JustTCG API
-    console.log(`🔄 Fetching fresh pricing from JustTCG for: ${gameId}/${setName}/${cardName}`);
+        const cacheDuration = cacheTimer.end();
+        
+        if (!cacheError && cachedPrice) {
+          const totalDuration = timer.end();
+          logStructured('info', 'Using cached pricing', {
+            operation,
+            cardId: primaryId,
+            condition,
+            printing,
+            cached: true,
+            cacheDuration,
+            totalDuration
+          });
+          console.log(`📋 Using cached pricing for card: ${primaryId}`);
+          return new Response(
+            JSON.stringify({ 
+              success: true, 
+              pricing: cachedPrice,
+              cached: true 
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+    // Fetch ALL variants from JustTCG API using only ID parameter (no filtering)
+    console.log(`🔄 Fetching ALL variants from JustTCG for ID: ${primaryId}`);
     
     try {
-      const pricingUrl = buildUrl('cards', { 
-        game: gameId,
-        set: setName,
-        name: cardName
-      });
+      // Build query with only ID parameter - no printing or condition filters
+      const params: Record<string, string> = {};
+      
+      if (cardId) {
+        params.cardId = cardId;
+      } else if (tcgplayerId) {
+        params.tcgplayerId = tcgplayerId;
+      } else if (variantId) {
+        params.variantId = variantId;
+      }
+      
+      const pricingUrl = buildUrl('cards', params);
       
       const pricingData = await fetchJsonWithRetry(
         pricingUrl,
@@ -536,114 +533,114 @@ serve(async (req) => {
         { tries: 3, baseDelayMs: 500, timeoutMs: 30000 }
       );
 
-      // Extract pricing for the specific card and variant
-      const cards = pricingData.data || pricingData || [];
-      const targetCard = cards.find((card: any) => 
-        (card.id || card.card_id) === cardId ||
-        card.name?.toLowerCase() === cardName.toLowerCase()
-      );
-
-      if (!targetCard || !targetCard.variants) {
-        console.warn(`📭 No pricing variants found for: ${cardId} (${condition}, ${printing})`);
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: 'No pricing variants available for this card',
-            status: 404
-          }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Find the specific variant/condition pricing
-      const targetVariant = targetCard.variants.find((variant: any) => {
-        const variantMatch = (variant.variant || variant.printing || 'Normal') === printing;
-        const conditionMatch = variant.conditions?.some((cond: any) => 
-          (cond.condition || 'Near Mint') === condition
-        );
-        return variantMatch && conditionMatch;
-      });
-
-      if (!targetVariant) {
-        console.warn(`📭 No pricing found for: ${cardId} (${condition}, ${printing})`);
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: `No pricing available for ${condition} condition, ${printing} printing`,
-            status: 404
-          }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const conditionPricing = targetVariant.conditions.find((cond: any) => 
-        (cond.condition || 'Near Mint') === condition
-      );
-
-      // Save the pricing to our database
-      const pricingRecord = {
-        card_id: cardData.jt_card_id,
-        variant: printing,
-        condition: condition,
-        currency: conditionPricing.currency || 'USD',
-        market_price: conditionPricing.market_price || conditionPricing.price,
-        low_price: conditionPricing.low_price,
-        high_price: conditionPricing.high_price,
-        source: 'JustTCG',
-        fetched_at: new Date().toISOString()
+      // Return API response unchanged - preserve all returned variant fields
+      const response = {
+        success: true,
+        data: pricingData.data || pricingData || [],
+        cached: false,
+        allVariants: true // Flag to indicate this contains all variants
       };
 
-      const { data: savedPrice, error: saveError } = await supabaseClient
-        .from('card_prices')
-        .upsert(pricingRecord, { 
-          onConflict: 'card_id,variant,condition,source',
-          ignoreDuplicates: false 
-        })
-        .select()
-        .single();
+      console.log(`✅ Fetched ${response.data.length} cards with all variants for ID: ${primaryId}`);
+      
+      // If specific condition/printing was requested, also save individual pricing records
+      if (condition && printing && response.data.length > 0) {
+        for (const card of response.data) {
+          if (card.variants && Array.isArray(card.variants)) {
+            for (const variant of card.variants) {
+              try {
+                // Handle different variant structures
+                if (variant.conditions && Array.isArray(variant.conditions)) {
+                  for (const conditionData of variant.conditions) {
+                    if ((conditionData.condition || 'Near Mint') === condition && 
+                        (variant.variant || variant.printing || 'Normal') === printing) {
+                      
+                      // Save this specific pricing to database for caching
+                      const pricingRecord = {
+                        card_id: primaryId,
+                        variant: printing,
+                        condition: condition,
+                        currency: conditionData.currency || 'USD',
+                        market_price: conditionData.market_price || conditionData.price,
+                        low_price: conditionData.low_price,
+                        high_price: conditionData.high_price,
+                        source: 'JustTCG',
+                        fetched_at: new Date().toISOString()
+                      };
 
-      if (saveError) {
-        console.error('Error saving pricing:', saveError);
-        // Still return the pricing data even if save failed
+                      await supabaseClient
+                        .from('card_prices')
+                        .upsert(pricingRecord, { 
+                          onConflict: 'card_id,variant,condition,source',
+                          ignoreDuplicates: false 
+                        });
+                    }
+                  }
+                } else if (variant.condition && variant.price !== undefined) {
+                  // Handle direct variant structure (legacy format)
+                  if ((variant.condition || 'Near Mint') === condition && 
+                      (variant.variant || variant.printing || 'Normal') === printing) {
+                    
+                    const pricingRecord = {
+                      card_id: primaryId,
+                      variant: printing,
+                      condition: condition,
+                      currency: variant.currency || 'USD',
+                      market_price: variant.price,
+                      low_price: variant.lowPrice,
+                      high_price: variant.highPrice,
+                      source: 'JustTCG',
+                      fetched_at: new Date().toISOString()
+                    };
+
+                    await supabaseClient
+                      .from('card_prices')
+                      .upsert(pricingRecord, { 
+                        onConflict: 'card_id,variant,condition,source',
+                        ignoreDuplicates: false 
+                      });
+                  }
+                }
+              } catch (saveError) {
+                console.warn('Warning: Could not save pricing record:', saveError);
+                // Continue processing other variants
+              }
+            }
+          }
+        }
       }
-
-      console.log(`✅ Fresh pricing fetched and saved for card: ${cardId}`);
       
       const totalDuration = timer.end();
-      logStructured('info', 'Fresh pricing fetched successfully', {
+      logStructured('info', 'All variants fetched successfully', {
         operation,
-        cardId,
+        cardId: primaryId,
         condition,
         printing,
         cached: false,
         duration: totalDuration,
-        marketPrice: conditionPricing.market_price || conditionPricing.price
+        variantCount: response.data.reduce((sum, card) => sum + (card.variants?.length || 0), 0)
       });
       
       return new Response(
-        JSON.stringify({ 
-          success: true, 
-          pricing: savedPrice || pricingRecord,
-          cached: false 
-        }),
+        JSON.stringify(response),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
 
     } catch (error) {
       const duration = timer.end();
-      logStructured('error', 'Error fetching pricing from JustTCG', {
+      logStructured('error', 'Error fetching variants from JustTCG', {
         operation,
-        cardId,
+        cardId: primaryId,
         condition,
         printing,
         duration,
         error: error.message
       });
-      console.error('❌ Error fetching pricing from JustTCG:', error.message, 'Payload:', requestPayload);
+      console.error('❌ Error fetching variants from JustTCG:', error.message, 'Payload:', requestPayload);
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: `Pricing service error: ${error.message}`,
+          error: `Variants service error: ${error.message}`,
           status: 500
         }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
