@@ -515,17 +515,8 @@ async function routeRequest(req: Request): Promise<Response> {
       );
     }
 
-    if (!gameId) {
-      console.error('❌ Missing gameId parameter');
-      return new Response(
-        JSON.stringify({ 
-          error: 'MISSING_GAME_ID', 
-          message: 'gameId is required',
-          code: 400
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    // gameId is optional; if omitted, syncCardsV2 will derive it from DB
+    console.log('📥 sync-cards-v2 request:', { setId, gameId: gameId || 'will derive from DB', operationId, isBackground });
 
     // Verify environment variables
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
