@@ -554,7 +554,10 @@ export const DataImportPanel = () => {
     
     try {
       const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-        body: { action: 'sync-cards', setId }
+        body: { action: 'sync-cards', setId },
+        headers: {
+          'x-background-sync': 'true'
+        }
       });
 
       if (error) throw error;
@@ -610,7 +613,10 @@ export const DataImportPanel = () => {
           
           try {
             const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-              body: { action: 'sync-cards', setId, operationId }
+              body: { action: 'sync-cards', setId, operationId },
+              headers: {
+                'x-background-sync': 'true'
+              }
             });
             if (error) throw error;
             return { success: true, setId, data };
@@ -654,9 +660,11 @@ export const DataImportPanel = () => {
     } catch (error) {
       console.error('Error bulk syncing cards:', error);
       toast({
-        title: "Bulk Sync Failed",
-        description: error.message || "Failed to bulk sync cards",
-        variant: "destructive",
+        title: error.message?.includes('fetch') ? "Sync Started" : "Bulk Sync Failed",
+        description: error.message?.includes('fetch') 
+          ? "Sync started and continues in background. Watch set status for updates."
+          : error.message || "Failed to bulk sync cards",
+        variant: error.message?.includes('fetch') ? "default" : "destructive",
       });
     } finally {
       setIsImporting(false);
@@ -774,7 +782,7 @@ export const DataImportPanel = () => {
   const isAllSelected = (gameId: string) => {
     const filteredSets = getFilteredSets(gameId);
     const gameSelectedSets = selectedSets.get(gameId);
-    return filteredSets.length > 0 && gameSelectedSets && 
+    return filteredSets.length > 0 && !!gameSelectedSets && 
            filteredSets.every(set => gameSelectedSets.has(set.jt_set_id));
   };
 

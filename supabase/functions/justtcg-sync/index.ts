@@ -80,6 +80,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // For long-running operations, detect background sync mode
+  const isBackgroundSync = req.headers.get('x-background-sync') === 'true';
+
   try {
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -113,10 +116,36 @@ serve(async (req) => {
         break;
       case 'sync-cards':
         if (!setId) throw new Error('setId required for sync-cards');
+        
+        // For background sync, return immediately and continue processing
+        if (isBackgroundSync) {
+          EdgeRuntime.waitUntil(syncCards(supabaseClient, setId));
+          return new Response(
+            JSON.stringify({ started: true, setId, operationId }),
+            { 
+              status: 202,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            }
+          );
+        }
+        
         result = await syncCards(supabaseClient, setId);
         break;
       case 'sync-cards-bulk':
         if (!setIds || !Array.isArray(setIds)) throw new Error('setIds array required for sync-cards-bulk');
+        
+        // For background sync, return immediately and continue processing
+        if (isBackgroundSync) {
+          EdgeRuntime.waitUntil(syncCardsBulk(supabaseClient, setIds, operationId));
+          return new Response(
+            JSON.stringify({ started: true, setIds, operationId }),
+            { 
+              status: 202,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            }
+          );
+        }
+        
         result = await syncCardsBulk(supabaseClient, setIds, operationId);
         break;
       default:
@@ -281,6 +310,15 @@ async function syncSets(supabaseClient: any, gameId: string) {
 
 async function syncCards(supabaseClient: any, setId: string) {
   console.log(`Syncing cards for set: ${setId}`);
+
+  // Update set status to syncing
+  await supabaseClient
+    .from('sets')
+    .update({ 
+      sync_status: 'syncing',
+      last_synced_at: new Date().toISOString() 
+    })
+    .eq('jt_set_id', setId);
 
   // Function to check for cancellation signals
   async function shouldCancel(): Promise<boolean> {
@@ -497,6 +535,17 @@ async function syncCards(supabaseClient: any, setId: string) {
     throw new Error(`Database error: ${cardError.message}`);
   }
 
+  console.log(`Successfully upserted ${upsertedCards?.length || 0} cards for set: ${setId}`);
+
+  // Update cards synced count immediately after cards upsert
+  await supabaseClient
+    .from('sets')
+    .update({ 
+      cards_synced_count: upsertedCards?.length || 0,
+      last_synced_at: new Date().toISOString()
+    })
+    .eq('jt_set_id', setId);
+
   // Extract sealed products from card variants
   allSealed = allCards.reduce((acc: SealedProduct[], card: Card) => {
     try {
@@ -579,6 +628,17 @@ async function syncCards(supabaseClient: any, setId: string) {
     throw new Error(`Database error: ${sealedError.message}`);
   }
 
+  console.log(`Successfully upserted ${upsertedSealed?.length || 0} sealed products for set: ${setId}`);
+
+  // Update sealed synced count
+  await supabaseClient
+    .from('sets')
+    .update({ 
+      sealed_synced_count: upsertedSealed?.length || 0,
+      last_synced_at: new Date().toISOString()
+    })
+    .eq('jt_set_id', setId);
+
   // Check for cancellation before pricing sync
   if (await shouldCancel()) {
     console.log(`🛑 Sync cancelled by admin before pricing sync for set: ${setId}`);
@@ -593,9 +653,16 @@ async function syncCards(supabaseClient: any, setId: string) {
     });
   }
 
-  // Fetch and store pricing data for all cards
+  // Fetch and store pricing data for all cards in batches
+  console.log(`📊 Processing pricing for ${allCards.length} cards...`);
   let pricesSynced = 0;
-  for (const card of allCards) {
+  const batchSize = 10;
+  
+  for (let i = 0; i < allCards.length; i += batchSize) {
+    const batch = allCards.slice(i, i + batchSize);
+    console.log(`📦 Processing pricing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(allCards.length/batchSize)}`);
+    
+    for (const card of batch) {
     const dbCardId = cardIdMap.get(card.id || card.card_id);
     if (!dbCardId) {
       console.warn(`No database card ID found for JustTCG card: ${card.id || card.card_id}`);
@@ -666,6 +733,15 @@ async function syncCards(supabaseClient: any, setId: string) {
         }
       }
     }
+    
+    // Update progress every batch
+    if ((i + batchSize) % 50 === 0 || i + batchSize >= allCards.length) {
+      console.log(`📈 Processed pricing for ${Math.min(i + batchSize, allCards.length)}/${allCards.length} cards`);
+      await supabaseClient
+        .from('sets')
+        .update({ last_synced_at: new Date().toISOString() })
+        .eq('jt_set_id', setId);
+    }
   }
 
   // Query the actual count of cards in database to get accurate count
@@ -681,7 +757,8 @@ async function syncCards(supabaseClient: any, setId: string) {
   const syncStatus = isComplete ? 'completed' : 'partial';
   const syncError = isComplete ? null : `Expected ${expectedTotalCards} cards but only synced ${actualCardsCount}`;
 
-  // Update set with sync completion status and counts
+  // Final update set sync status to completed
+  console.log(`🏁 Finalizing sync for set: ${setId}`);
   await supabaseClient
     .from('sets')
     .update({ 
