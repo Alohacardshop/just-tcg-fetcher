@@ -770,48 +770,66 @@ export const DataImportPanel = () => {
         }
 
         const batch = setIds.slice(i, i + concurrency);
-          const promises = batch.map(async (setId) => {
-            if (bulkCancelRequested) return { success: false, setId };
-            
-            try {
-              const { data, error } = await supabase.functions.invoke('justtcg-sync', {
-                body: { action: 'sync-cards', setId, operationId },
-                headers: {
-                  'x-background-sync': 'true'
-                }
-              });
-              if (error) throw error;
-              
-              // Handle background sync started response
-              if (data.started === true) {
-                // Start polling for each set if background sync
-                startSetStatusPolling(setId);
+        const promises = batch.map(async (setId) => {
+          if (bulkCancelRequested) return { success: false, setId };
+          
+          try {
+            const { data, error } = await supabase.functions.invoke('justtcg-sync', {
+              body: { action: 'sync-cards', setId, operationId },
+              headers: {
+                'x-background-sync': 'true'
               }
-              
-              return { success: true, setId, data };
-            } catch (error) {
-              console.error(`Error syncing set ${setId}:`, error);
-              return { success: false, setId, error: error.message };
-            }
-          });
+            });
 
-        const results = await Promise.all(promises);
-        allResults.push(...results);
-        
-        results.forEach(result => {
-          if (result.success) {
-            successful++;
-          } else {
-            failed++;
+            if (error) {
+              console.error(`Error syncing set ${setId}:`, error);
+              return { success: false, setId, error: error.message || 'Unknown error' };
+            }
+
+            // ===== 5. BETTER LOG MESSAGES & NULL-SAFE PROGRESS TEXT =====
+            const cardsProcessed = data?.cardsProcessed ?? data?.cards ?? 0;
+            const variantsProcessed = data?.variantsProcessed ?? data?.variants ?? 0;
+            console.log(`✅ Set ${setId} synced: ${cardsProcessed} cards, ${variantsProcessed} variants`);
+            
+            // Handle background sync started response
+            if (data?.started === true) {
+              // Start polling for each set if background sync
+              startSetStatusPolling(setId);
+            }
+            
+            return { success: true, setId, data };
+          } catch (error: any) {
+            console.error(`Error syncing set ${setId}:`, error);
+            return { 
+              success: false, 
+              setId, 
+              error: error.message || 'Network error - failed to reach sync function'
+            };
           }
         });
 
+        const results = await Promise.all(promises);
+        
+        // Update progress with null-safe counts
+        const successCount = results.filter(r => r.success).length;
+        const failedCount = results.filter(r => !r.success).length;
+        
+        successful += successCount;
+        failed += failedCount;
+        
         setBulkProgress({ 
           current: successful + failed, 
           total: setIds.length, 
           successful, 
           failed 
         });
+
+        // Collect results with null-safe data extraction
+        allResults.push(...results.map(result => ({
+          ...result,
+          cardsProcessed: result.data?.cardsProcessed ?? result.data?.cards ?? 0,
+          variantsProcessed: result.data?.variantsProcessed ?? result.data?.variants ?? 0
+        })));
       }
 
       if (!bulkCancelRequested) {
@@ -823,9 +841,16 @@ export const DataImportPanel = () => {
             description: `${setIds.length} sets started syncing in background. Watch set statuses for updates.`,
           });
         } else {
+          // ===== 5. NULL-SAFE FINAL PROGRESS TEXT =====
+          const totalCardsProcessed = allResults.reduce((sum, result) => 
+            sum + (result.cardsProcessed ?? 0), 0);
+          const totalVariantsProcessed = allResults.reduce((sum, result) => 
+            sum + (result.variantsProcessed ?? 0), 0);
+          
           toast({
             title: "Bulk Sync Complete", 
-            description: `Processed ${successful + failed}/${setIds.length} sets. ${successful} successful, ${failed} failed.`,
+            description: `Processed ${setIds.length} sets: ${successful} successful, ${failed} failed. Total: ${totalCardsProcessed} cards, ${totalVariantsProcessed} variants`,
+            variant: successful > 0 ? "default" : "destructive",
           });
         }
         

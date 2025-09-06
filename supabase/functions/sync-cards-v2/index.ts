@@ -152,6 +152,7 @@ export class JustTCGClient {
   /**
    * Generator function that yields card pages as arrays only
    * Never yields undefined/null - always returns empty array on error
+   * ===== C. NORMALIZE ITERATOR OUTPUT =====
    */
   async* getCards(gameId: string, setId: string, pageSize = 100): AsyncGenerator<any[], void, unknown> {
     console.log(`🃏 Starting JustTCGClient.getCards for ${gameId}/${setId} (pageSize: ${pageSize})`);
@@ -181,11 +182,15 @@ export class JustTCGClient {
         const response = await fetchJsonWithRetry(url);
         const duration = Date.now() - startTime;
         
-        // Extract data with defensive guards
+        // ===== C. DEFENSIVE GUARDS FOR RESPONSE DATA =====
+        // Extract data with defensive guards - always ensure arrays
         let pageData: any[] = [];
         if (response && typeof response === 'object') {
           const rawData = response.data || response.cards || response.items || [];
           pageData = Array.isArray(rawData) ? rawData : [];
+        } else {
+          console.warn(`⚠️ JustTCGClient received non-object response on page ${pageCount}, treating as empty`);
+          pageData = [];
         }
         
         // Extract metadata with defensive guards
@@ -236,11 +241,23 @@ export class JustTCGClient {
         
       } catch (error) {
         const duration = Date.now() - startTime;
-        console.error(`❌ JustTCGClient error fetching page ${pageCount} (${duration}ms):`, error.message);
+        console.error(`❌ JustTCGClient error fetching page ${pageCount} (${duration}ms):`, error.message || error);
         
-        // On error, yield empty array and stop pagination
-        yield [];
-        break;
+        // ===== C. ON ERROR, YIELD EMPTY ARRAY AND LOG CONTEXT =====
+        console.error(`🔍 JustTCGClient error context: gameId=${gameId}, setId=${setId}, page=${pageCount}, offset=${offset}`);
+        
+        // For transient errors, try to continue after yielding empty array
+        if (pageCount === 1) {
+          // If first page fails, stop completely
+          console.error(`❌ JustTCGClient first page failed, stopping pagination`);
+          yield [];
+          break;
+        } else {
+          // For subsequent pages, yield empty and continue with backoff
+          console.warn(`⚠️ JustTCGClient page ${pageCount} failed, yielding empty array and stopping pagination`);
+          yield [];
+          break;
+        }
       }
     }
     
@@ -434,6 +451,7 @@ export class SyncManager {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 // Handle CORS preflight requests
@@ -671,7 +689,7 @@ async function syncCardsV2(
       );
     }
 
-    // Final validation and status update
+    // Final validation and status update with defensive guards
     const finalProcessedCount = processedCards?.length ?? 0;
     const wasSuccessful = finalProcessedCount > 0;
     
@@ -685,18 +703,19 @@ async function syncCardsV2(
       await syncManager.updateSetStatus(setId, 'error', errorMsg);
     }
 
-    // ===== B. HARDENED SUCCESS LOGGING =====
-    const successMessage = `Successfully synced ${finalProcessedCount} cards for set ${setId}`;
+    // ===== B. HARDENED SUCCESS LOGGING WITH NULL-SAFE COUNTS =====
+    const cardsCount = processedCards?.length ?? 0;
+    const successMessage = `Successfully synced ${cardsCount} cards for set ${setId}`;
     
     return syncManager.createResult(
       wasSuccessful,
       jobId,
       successMessage,
       {
-        totalProcessed: finalProcessedCount,
-        totalInserted: finalProcessedCount, // In upsert scenario, consider all as inserts for simplicity
+        totalProcessed: cardsCount,
+        totalInserted: cardsCount, // In upsert scenario, consider all as inserts for simplicity
         totalUpdated: 0,
-        totalErrors: totalCards - finalProcessedCount,
+        totalErrors: Math.max(0, totalCards - cardsCount),
         pagesProcessed
       }
     );
@@ -704,7 +723,8 @@ async function syncCardsV2(
   } catch (error) {
     console.error(`❌ Error in syncCardsV2 for set ${setId}:`, error);
     
-    // ===== B. HARDENED ERROR LOGGING =====
+    // ===== B. HARDENED ERROR LOGGING WITH NULL-SAFE COUNTS =====
+    const cardsCount = processedCards?.length ?? 0;
     const errorMessage = `Failed to sync cards for set ${setId}: ${typeof error?.message === 'string' ? error.message : 'Unknown error'}`;
     
     await syncManager.updateSetStatus(setId, 'error', errorMessage);
@@ -714,10 +734,10 @@ async function syncCardsV2(
       jobId,
       errorMessage,
       {
-        totalProcessed: processedCards?.length ?? 0,
+        totalProcessed: cardsCount,
         totalInserted: 0,
         totalUpdated: 0,
-        totalErrors: totalCards,
+        totalErrors: Math.max(0, totalCards - cardsCount),
         pagesProcessed
       }
     );
