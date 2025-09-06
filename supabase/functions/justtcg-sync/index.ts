@@ -357,18 +357,24 @@ async function syncCards(supabaseClient: any, setId: string) {
         gameId: normalizedGameId, 
         setId: setName 
       });
-      
-      // listAllCardsBySet returns { items, meta }
-      allCards = cardsResult.items || [];
-      cardsMeta = cardsResult.meta;
+      // listAllCardsBySet in edge helpers returns a plain array
+      const rawResult: any = cardsResult as any;
+      if (Array.isArray(rawResult)) {
+        allCards = rawResult;
+        cardsMeta = undefined;
+      } else {
+        allCards = rawResult.items || rawResult.data || [];
+        cardsMeta = rawResult.meta || rawResult._metadata;
+      }
       
       console.log(`✅ Retrieved ${allCards.length} cards with pagination meta:`, cardsMeta);
       console.log(`🔍 cardsResult structure:`, { 
-        hasItems: !!cardsResult.items, 
-        itemsLength: cardsResult.items?.length, 
-        hasMeta: !!cardsResult.meta,
-        rawResultType: typeof cardsResult,
-        rawResultKeys: Object.keys(cardsResult)
+        isArray: Array.isArray(rawResult),
+        hasItems: !Array.isArray(rawResult) && !!rawResult.items, 
+        itemsLength: !Array.isArray(rawResult) ? rawResult.items?.length : rawResult.length, 
+        hasMeta: !Array.isArray(rawResult) && !!rawResult.meta,
+        rawResultType: typeof rawResult,
+        rawResultKeys: Array.isArray(rawResult) ? ['array'] : Object.keys(rawResult)
       });
     } catch (apiError) {
       console.error(`❌ API call failed:`, apiError);
