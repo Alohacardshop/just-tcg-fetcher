@@ -6,6 +6,8 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
   Upload, 
   Download, 
@@ -24,7 +26,8 @@ import {
   Shield,
   RefreshCw,
   Zap,
-  AlertTriangle
+  AlertTriangle,
+  Unlock
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -233,15 +236,24 @@ export const DataImportPanel = () => {
         .from('sets')
         .update({ 
           sync_status: 'error',
-          last_sync_error: 'Reset manually by admin'
+          last_sync_error: 'Manually unstuck by admin'
         })
         .eq('id', setInternalId);
       
       if (error) throw error;
       
+      // Log the reset action
+      await supabase
+        .from('sync_control')
+        .insert({
+          operation_type: 'unstick_set',
+          operation_id: `unstick_${setInternalId}_${Date.now()}`,
+          created_by: user?.id
+        });
+      
       toast({
-        title: "Status Reset",
-        description: `${setName} status reset to error state`,
+        title: "Set Unstuck",
+        description: `${setName} has been marked as Error to allow retry`,
       });
       
       // Refresh sets if expanded
@@ -249,10 +261,53 @@ export const DataImportPanel = () => {
         fetchSets(expandedGameId);
       }
     } catch (error) {
-      console.error('Error resetting set status:', error);
+      console.error('Error unsticking set:', error);
+      toast({
+        title: "Unstick Failed",
+        description: "Failed to unstick set",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  // Reset set to idle (admin only)
+  const handleResetToIdle = async (setInternalId: string, setName: string) => {
+    if (!isAdmin) return;
+    
+    try {
+      const { error } = await supabase
+        .from('sets')
+        .update({ 
+          sync_status: 'idle',
+          last_sync_error: null
+        })
+        .eq('id', setInternalId);
+      
+      if (error) throw error;
+      
+      // Log the reset action
+      await supabase
+        .from('sync_control')
+        .insert({
+          operation_type: 'reset_to_idle',
+          operation_id: `reset_idle_${setInternalId}_${Date.now()}`,
+          created_by: user?.id
+        });
+      
+      toast({
+        title: "Set Reset to Idle",
+        description: `${setName} has been reset to idle state`,
+      });
+      
+      // Refresh sets if expanded
+      if (expandedGameId) {
+        fetchSets(expandedGameId);
+      }
+    } catch (error) {
+      console.error('Error resetting set to idle:', error);
       toast({
         title: "Reset Failed",
-        description: "Failed to reset set status",
+        description: "Failed to reset set to idle",
         variant: "destructive",
       });
     }
@@ -1251,7 +1306,19 @@ export const DataImportPanel = () => {
                                      switch (set.sync_status) {
                                        case 'syncing':
                                          return isStuck 
-                                           ? <Badge variant="destructive" className="text-orange-600 border-orange-500"><AlertTriangle className="h-3 w-3 mr-1" />Stuck</Badge>
+                                           ? (
+                                             <Tooltip>
+                                               <TooltipTrigger>
+                                                 <Badge variant="destructive" className="text-orange-600 border-orange-500">
+                                                   <AlertTriangle className="h-3 w-3 mr-1" />
+                                                   Stuck
+                                                 </Badge>
+                                               </TooltipTrigger>
+                                               <TooltipContent>
+                                                 <p>Syncing for over 15 minutes - may need admin intervention</p>
+                                               </TooltipContent>
+                                             </Tooltip>
+                                           )
                                            : <Badge variant="secondary" className="text-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" />Syncing</Badge>;
                                        case 'success':
                                        case 'completed':
@@ -1313,17 +1380,85 @@ export const DataImportPanel = () => {
                                            )}
                                            {set.sync_status === 'syncing' && !isStuck ? 'Syncing...' : 'Sync Cards'}
                                          </Button>
-                                         {isAdmin && isStuck && (
-                                           <Button
-                                             onClick={() => handleResetSetStatus(set.id, set.name)}
-                                             size="sm"
-                                             variant="outline"
-                                             className="border-orange-500 text-orange-600 hover:bg-orange-50"
-                                           >
-                                             <RefreshCw className="h-3 w-3 mr-1" />
-                                             Reset
-                                           </Button>
-                                         )}
+                                          {isAdmin && isStuck && (
+                                            <div className="flex gap-1">
+                                              <AlertDialog>
+                                                <AlertDialogTrigger asChild>
+                                                  <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                      <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="border-orange-500 text-orange-600 hover:bg-orange-50"
+                                                      >
+                                                        <Unlock className="h-3 w-3 mr-1" />
+                                                        Unstick
+                                                      </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                      <p>Marks this set as Error to allow re-running the sync. No data is deleted.</p>
+                                                    </TooltipContent>
+                                                  </Tooltip>
+                                                </AlertDialogTrigger>
+                                                <AlertDialogContent>
+                                                  <AlertDialogHeader>
+                                                    <AlertDialogTitle>Unstick Set</AlertDialogTitle>
+                                                    <AlertDialogDescription>
+                                                      This will mark "{set.name}" as Error to allow re-running the sync. 
+                                                      No existing data will be deleted. You can then retry the sync operation.
+                                                    </AlertDialogDescription>
+                                                  </AlertDialogHeader>
+                                                  <AlertDialogFooter>
+                                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                    <AlertDialogAction 
+                                                      onClick={() => handleResetSetStatus(set.id, set.name)}
+                                                      className="bg-orange-500 hover:bg-orange-600"
+                                                    >
+                                                      Unstick Set
+                                                    </AlertDialogAction>
+                                                  </AlertDialogFooter>
+                                                </AlertDialogContent>
+                                              </AlertDialog>
+                                              
+                                              <AlertDialog>
+                                                <AlertDialogTrigger asChild>
+                                                  <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                      <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="border-blue-500 text-blue-600 hover:bg-blue-50"
+                                                      >
+                                                        <RefreshCw className="h-3 w-3 mr-1" />
+                                                        Reset
+                                                      </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                      <p>Resets to idle state and clears errors</p>
+                                                    </TooltipContent>
+                                                  </Tooltip>
+                                                </AlertDialogTrigger>
+                                                <AlertDialogContent>
+                                                  <AlertDialogHeader>
+                                                    <AlertDialogTitle>Reset to Idle</AlertDialogTitle>
+                                                    <AlertDialogDescription>
+                                                      This will reset "{set.name}" to idle state and clear any error messages.
+                                                      No existing data will be deleted.
+                                                    </AlertDialogDescription>
+                                                  </AlertDialogHeader>
+                                                  <AlertDialogFooter>
+                                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                    <AlertDialogAction 
+                                                      onClick={() => handleResetToIdle(set.id, set.name)}
+                                                      className="bg-blue-500 hover:bg-blue-600"
+                                                    >
+                                                      Reset to Idle
+                                                    </AlertDialogAction>
+                                                  </AlertDialogFooter>
+                                                </AlertDialogContent>
+                                              </AlertDialog>
+                                            </div>
+                                          )}
                                          {set.cards_synced_count > 0 && (
                                            <Button
                                              onClick={() => viewSampleCard(set.id)}
