@@ -23,7 +23,8 @@ import {
   X,
   Shield,
   RefreshCw,
-  Zap
+  Zap,
+  AlertTriangle
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -110,25 +111,100 @@ export const DataImportPanel = () => {
     if (!isAdmin || !currentOperationId) return;
     
     try {
+      // Cancel client-side operations immediately
+      setBulkCancelRequested(true);
+      setIsImporting(false);
+      
+      // Insert multiple control records to ensure cancellation
       await supabase
         .from('sync_control')
-        .upsert({
-          operation_type: 'bulk_sync',
-          operation_id: currentOperationId,
-          should_cancel: true,
-          created_by: user?.id
-        });
+        .upsert([
+          {
+            operation_type: 'bulk_sync',
+            operation_id: currentOperationId,
+            should_cancel: true,
+            created_by: user?.id
+          },
+          {
+            operation_type: 'any',
+            operation_id: 'force_stop_all',
+            should_cancel: true,
+            created_by: user?.id
+          }
+        ]);
+      
+      // Also try to update any existing records
+      await supabase
+        .from('sync_control')
+        .update({ should_cancel: true })
+        .eq('operation_id', currentOperationId);
       
       toast({
         title: "Force Stop Initiated",
-        description: "Server-side cancellation signal sent",
+        description: "All sync operations stopped immediately",
       });
+      
+      // Reset states
+      setBulkProgress(null);
+      setCurrentOperationId(null);
+      
     } catch (error) {
       console.error('Error setting force stop:', error);
+      
+      // Force stop locally even if database update fails
+      setBulkCancelRequested(true);
+      setIsImporting(false);
+      setBulkProgress(null);
+      setCurrentOperationId(null);
+      
       toast({
-        title: "Error",
-        description: "Failed to send force stop signal",
+        title: "Force Stopped Locally",
+        description: "Operations stopped on client side",
         variant: "destructive",
+      });
+    }
+  };
+
+  // Emergency stop all operations
+  const handleEmergencyStop = async () => {
+    try {
+      // Stop everything immediately
+      setBulkCancelRequested(true);
+      setIsImporting(false);
+      setBulkProgress(null);
+      setCurrentOperationId(null);
+      
+      // Clear all sync control records
+      await supabase
+        .from('sync_control')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all records
+      
+      // Insert a global stop signal
+      await supabase
+        .from('sync_control')
+        .upsert({
+          operation_type: 'emergency_stop',
+          operation_id: 'global_stop_' + Date.now(),
+          should_cancel: true,
+          created_by: user?.id
+        });
+        
+      toast({
+        title: "Emergency Stop",
+        description: "All operations halted immediately",
+      });
+    } catch (error) {
+      console.error('Emergency stop error:', error);
+      // Force stop locally regardless
+      setBulkCancelRequested(true);
+      setIsImporting(false);
+      setBulkProgress(null);
+      setCurrentOperationId(null);
+      
+      toast({
+        title: "Emergency Stop",
+        description: "Operations stopped locally",
       });
     }
   };
@@ -562,9 +638,13 @@ export const DataImportPanel = () => {
 
   const handleCancelBulkSync = () => {
     setBulkCancelRequested(true);
+    setIsImporting(false);
+    setBulkProgress(null);
+    setCurrentOperationId(null);
+    
     toast({
-      title: "Cancelling Sync",
-      description: "Stopping after current operations complete...",
+      title: "Sync Cancelled",
+      description: "All operations stopped immediately",
     });
   };
 
@@ -1046,18 +1126,42 @@ export const DataImportPanel = () => {
       </Card>
 
       {/* Import Status */}
-      {(importProgress > 0 || bulkProgress) && (
+      {(importProgress > 0 || bulkProgress || isImporting) && (
         <Card className="bg-gradient-card border-border shadow-card">
           <div className="p-6">
-            <div className="flex items-center gap-2 mb-4">
-              {importProgress === 100 && !bulkProgress ? (
-                <CheckCircle className="h-5 w-5 text-green-500" />
-              ) : (
-                <AlertCircle className="h-5 w-5 text-accent" />
-              )}
-              <h3 className="text-lg font-semibold">
-                {importProgress === 100 && !bulkProgress ? "Sync Complete" : "Sync in Progress"}
-              </h3>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                {importProgress === 100 && !bulkProgress ? (
+                  <CheckCircle className="h-5 w-5 text-green-500" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 text-accent" />
+                )}
+                <h3 className="text-lg font-semibold">
+                  {importProgress === 100 && !bulkProgress ? "Sync Complete" : "Sync in Progress"}
+                </h3>
+              </div>
+              
+              {/* Emergency stop controls */}
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleCancelBulkSync}
+                  size="sm"
+                  variant="outline"
+                  className="border-yellow-500 text-yellow-600 hover:bg-yellow-50"
+                >
+                  <X className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleEmergencyStop}
+                  size="sm"
+                  variant="destructive"
+                  className="bg-red-500 hover:bg-red-600 text-white"
+                >
+                  <AlertTriangle className="h-4 w-4 mr-2" />
+                  Emergency Stop
+                </Button>
+              </div>
             </div>
             
             {bulkProgress && (
@@ -1073,9 +1177,9 @@ export const DataImportPanel = () => {
                 </div>
                 <Progress value={(bulkProgress.current / bulkProgress.total) * 100} className="h-2" />
                 {bulkCancelRequested && (
-                  <div className="text-sm text-yellow-600 flex items-center gap-2">
+                  <div className="text-sm text-red-600 flex items-center gap-2">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Cancelling... waiting for current operations to complete
+                    Operations stopped - cancelling remaining tasks
                   </div>
                 )}
               </div>
