@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { CheckCircle, Circle, Play, Layers3, Boxes, Package } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useToast } from "@/hooks/use-toast";
 import { useState } from 'react';
 
 interface TcgCsvGuidedPanelProps {
@@ -14,6 +15,8 @@ interface TcgCsvGuidedPanelProps {
 }
 
 export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgCsvGuidedPanelProps) => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   // Load TCGCSV Categories (Magic, Pokémon, etc.)
   const { data: categories } = useQuery({
     queryKey: ['tcgcsv-categories-list'],
@@ -77,6 +80,23 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
       if (error) throw error;
       return data;
     },
+    onSuccess: (data) => {
+      toast({
+        title: "Groups Fetched",
+        description: `Successfully fetched groups for the selected category`,
+      });
+      
+      // Refresh the statistics and categories
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-category-stats', selectedCategoryId] });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Fetch Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const [productsProgress, setProductsProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
@@ -104,6 +124,23 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
       }
 
       return { success: true, message: `Fetched products for ${list.length} groups` };
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Products Fetched",
+        description: `Successfully fetched products for all groups in the category`,
+      });
+      
+      // Refresh the statistics and categories
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-category-stats', selectedCategoryId] });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Fetch Failed",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 

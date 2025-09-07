@@ -69,6 +69,7 @@ export const TcgCsvSyncV2 = () => {
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [currentOperationId, setCurrentOperationId] = useState<string>('');
+  const [loadingGroupId, setLoadingGroupId] = useState<string>('');
 
   // Keep Guided Workflow in sync with Categories tab selection
   useEffect(() => {
@@ -572,6 +573,9 @@ export const TcgCsvSyncV2 = () => {
                             key={group.group_id} 
                             className="p-3 border rounded-lg bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
                             onClick={async () => {
+                              if (loadingGroupId) return; // Prevent multiple clicks
+                              
+                              setLoadingGroupId(group.group_id);
                               try {
                                 const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
                                   body: { 
@@ -587,12 +591,15 @@ export const TcgCsvSyncV2 = () => {
                                 });
                                 // Refresh categories to update product counts
                                 queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
+                                queryClient.invalidateQueries({ queryKey: ['tcgcsv-groups-for-selector'] });
                               } catch (error: any) {
                                 toast({
                                   title: "Fetch Failed",
                                   description: error.message,
                                   variant: "destructive",
                                 });
+                              } finally {
+                                setLoadingGroupId('');
                               }
                             }}
                           >
@@ -604,8 +611,13 @@ export const TcgCsvSyncV2 = () => {
                               )}
                             </div>
                             <div className="mt-2">
-                              <Button size="sm" variant="outline" className="w-full text-xs">
-                                Fetch Products
+                              <Button 
+                                size="sm" 
+                                variant="outline" 
+                                className="w-full text-xs"
+                                disabled={loadingGroupId === group.group_id}
+                              >
+                                {loadingGroupId === group.group_id ? 'Fetching...' : 'Fetch Products'}
                               </Button>
                             </div>
                           </div>
