@@ -115,6 +115,10 @@ export const TcgCsvSyncV2 = () => {
     },
     onSuccess: (data) => {
       setFetchResult(data);
+      // Refetch the relevant data
+      if (data.success) {
+        window.location.reload(); // Quick refresh to show new data
+      }
       toast({
         title: "Fetch Successful",
         description: data.message,
@@ -341,11 +345,93 @@ export const TcgCsvSyncV2 = () => {
         </CardContent>
       </Card>
 
+      {/* Data Overview */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Current Data</CardTitle>
+          <CardDescription>Overview of fetched TCGCSV data</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 border rounded-lg">
+              <div className="text-2xl font-bold">{categories?.length || 0}</div>
+              <div className="text-sm text-muted-foreground">Categories</div>
+              {categoriesLoading && <div className="text-xs">Loading...</div>}
+            </div>
+            <div className="p-4 border rounded-lg">
+              <div className="text-2xl font-bold">{groups?.length || 0}</div>
+              <div className="text-sm text-muted-foreground">Groups {selectedCategory ? `(${categories?.find(c => c.category_id === selectedCategory)?.name})` : ''}</div>
+              {groupsLoading && <div className="text-xs">Loading...</div>}
+            </div>
+            <div className="p-4 border rounded-lg">
+              <div className="text-2xl font-bold">-</div>
+              <div className="text-sm text-muted-foreground">Products (select group)</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Categories Preview */}
+      {categories && categories.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Categories ({categories.length})</CardTitle>
+            <CardDescription>Available game categories from TCGCSV</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto">
+              {categories.map((category) => (
+                <div 
+                  key={category.id} 
+                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                    selectedCategory === category.category_id 
+                      ? 'bg-primary/10 border-primary' 
+                      : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setSelectedCategory(category.category_id)}
+                >
+                  <div className="font-medium text-sm">{category.name}</div>
+                  <div className="text-xs text-muted-foreground">ID: {category.category_id}</div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Groups Preview */}
+      {groups && groups.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Groups ({groups.length})</CardTitle>
+            <CardDescription>Available sets/groups for selected category</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto">
+              {groups.map((group) => (
+                <div 
+                  key={group.group_id} 
+                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                    selectedGroup === group.group_id 
+                      ? 'bg-primary/10 border-primary' 
+                      : 'hover:bg-muted'
+                  }`}
+                  onClick={() => setSelectedGroup(group.group_id)}
+                >
+                  <div className="font-medium text-sm">{group.name}</div>
+                  <div className="text-xs text-muted-foreground">ID: {group.group_id}</div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Results */}
       {(fetchResult || matchResult) && (
         <Card>
           <CardHeader>
-            <CardTitle>Results</CardTitle>
+            <CardTitle>Latest Operation Results</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {fetchResult && (
