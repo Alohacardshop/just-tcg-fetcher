@@ -366,22 +366,33 @@ async function batchUpsertProducts(products: any[], operationId: string, supabas
     return 0;
   }
 
-  // Deduplicate by product_id to avoid ON CONFLICT affecting the same row twice
-  const uniqueMap = new Map<number, any>();
+  // Create unique key combining product_id and key distinguishing features to preserve variants
+  const uniqueMap = new Map<string, any>();
   let duplicatesRemoved = 0;
   
   for (const p of products) {
     if (p && typeof p.product_id === 'number') {
-      if (uniqueMap.has(p.product_id)) {
+      // Create unique key from product_id + distinguishing variant features
+      const variantKey = [
+        p.product_id,
+        p.rarity || '',
+        p.product_type || '',
+        (p.extended_data?.subTypeName || ''),
+        (p.extended_data?.extRarity || ''),
+        (p.extended_data?.extCardType || '')
+      ].join('|');
+      
+      if (uniqueMap.has(variantKey)) {
         duplicatesRemoved++;
-        console.log(`[${operationId}] Duplicate product_id ${p.product_id}: keeping "${uniqueMap.get(p.product_id).name}", removing "${p.name}"`);
+        console.log(`[${operationId}] Duplicate variant key ${variantKey}: keeping "${uniqueMap.get(variantKey).name}", removing "${p.name}"`);
+      } else {
+        uniqueMap.set(variantKey, p);
       }
-      uniqueMap.set(p.product_id, p);
     }
   }
   const uniqueProducts = Array.from(uniqueMap.values());
   
-  console.log(`[${operationId}] Deduplication complete: ${products.length} total → ${uniqueProducts.length} unique (${duplicatesRemoved} duplicates removed)`);
+  console.log(`[${operationId}] Variant deduplication complete: ${products.length} total → ${uniqueProducts.length} unique variants (${duplicatesRemoved} exact duplicates removed)`);
 
   const batchSize = Number(Deno.env.get('UPSERT_BATCH_SIZE')) || 1000;
   let totalUpserted = 0;
