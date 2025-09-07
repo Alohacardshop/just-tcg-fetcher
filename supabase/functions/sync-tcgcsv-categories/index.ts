@@ -29,136 +29,201 @@ async function logToSyncLogs(supabase: any, operationId: string, status: string,
   }
 }
 
+function generateSlug(name: string, index: number): string {
+  if (!name || typeof name !== 'string') return `unknown-${index}`;
+  
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 50) || `unknown-${index}`;
+}
+
+async function fetchAndNormalizeCategories(operationId: string, supabase: any) {
+  try {
+    await logToSyncLogs(supabase, operationId, 'info', 'Fetching TCGCSV categories from endpoint');
+
+    // Fetch with timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(CATEGORIES_URL, { 
+      method: 'GET',
+      signal: controller.signal 
+    });
+    clearTimeout(timeout);
+
+    // Log HTTP status
+    console.log("TCGCSV HTTP status", response.status);
+    await logToSyncLogs(supabase, operationId, 'info', `TCGCSV HTTP status: ${response.status}`);
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const errorMsg = `TCGCSV HTTP ${response.status}: ${errorText.slice(0, 400)}`;
+      throw new Error(errorMsg);
+    }
+
+    // Parse JSON safely
+    const raw = await response.json().catch(() => {
+      console.warn("Failed to parse JSON response, defaulting to empty object");
+      return {};
+    });
+
+    // Log payload shape diagnostics
+    const diagnostics = {
+      isArray: Array.isArray(raw),
+      hasCategories: Array.isArray(raw?.categories),
+      hasData: Array.isArray(raw?.data),
+      categoriesCount: Array.isArray(raw?.categories) ? raw.categories.length : 0,
+      dataCount: Array.isArray(raw?.data) ? raw.data.length : 0,
+      rawCount: Array.isArray(raw) ? raw.length : 0
+    };
+
+    console.log("Payload shape diagnostics", diagnostics);
+    await logToSyncLogs(supabase, operationId, 'info', 'Payload shape analysis', diagnostics);
+
+    // Normalize Categories - Accept valid arrays from different shapes
+    let categories: any[] = [];
+    
+    if (Array.isArray(raw)) {
+      categories = raw;
+    } else if (Array.isArray(raw?.categories)) {
+      categories = raw.categories;
+    } else if (Array.isArray(raw?.data)) {
+      categories = raw.data;
+    } else {
+      console.warn("No valid categories array found in response, defaulting to empty array");
+      categories = [];
+    }
+
+    // Log first 2 category samples for debugging
+    if (categories.length > 0) {
+      const samples = categories.slice(0, 2);
+      console.log("First 2 category samples", samples);
+      await logToSyncLogs(supabase, operationId, 'info', 'Category samples', { samples, totalCount: categories.length });
+    }
+
+    // Safe Mapping - Never call .map() unless Array.isArray is true
+    const normalized: any[] = [];
+    
+    if (Array.isArray(categories)) {
+      for (let i = 0; i < categories.length; i++) {
+        const cat = categories[i];
+        
+        const normalizedCategory = {
+          id: cat?.categoryId || cat?.id || i,
+          name: cat?.name || cat?.title || "Unknown",
+          slug: cat?.slug || generateSlug(cat?.name || cat?.title, i),
+          tcgcsv_category_id: cat?.categoryId || cat?.id || i,
+          display_name: cat?.displayName || cat?.display_name || cat?.name || cat?.title || "Unknown",
+          modified_on: cat?.modifiedOn ? new Date(cat.modifiedOn).toISOString() : null,
+          category_group_id: cat?.categoryGroupId || cat?.category_group_id || null,
+          raw: cat
+        };
+        
+        normalized.push(normalizedCategory);
+      }
+    }
+
+    await logToSyncLogs(supabase, operationId, 'info', `Normalized ${normalized.length} categories`);
+
+    return normalized;
+
+  } catch (error: any) {
+    await logToSyncLogs(supabase, operationId, 'error', 'Failed to fetch TCGCSV categories', { error: error.message });
+    throw error;
+  }
+}
+
+async function syncCategoriesToDB(categories: any[], operationId: string, supabase: any) {
+  // DB Sync Guard - Skip if no categories
+  if (!Array.isArray(categories) || categories.length === 0) {
+    const warningMsg = "No categories fetched. Skipping DB sync.";
+    console.warn(warningMsg);
+    await logToSyncLogs(supabase, operationId, 'warning', warningMsg);
+    return null;
+  }
+
+  try {
+    await logToSyncLogs(supabase, operationId, 'info', `Starting DB sync for ${categories.length} categories`);
+
+    const { data, error } = await supabase
+      .from('tcgcsv_categories')
+      .upsert(
+        categories.map(cat => ({
+          tcgcsv_category_id: cat.tcgcsv_category_id,
+          name: cat.name,
+          display_name: cat.display_name,
+          modified_on: cat.modified_on,
+          category_group_id: cat.category_group_id
+        })),
+        { 
+          onConflict: 'tcgcsv_category_id',
+          ignoreDuplicates: false 
+        }
+      );
+
+    if (error) {
+      throw new Error(`DB upsert failed: ${error.message}`);
+    }
+
+    await logToSyncLogs(supabase, operationId, 'success', `Successfully synced ${categories.length} categories to database`);
+    return data;
+
+  } catch (error: any) {
+    await logToSyncLogs(supabase, operationId, 'error', 'DB sync failed', { error: error.message });
+    throw error;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
   const operationId = crypto.randomUUID();
   let supabase: any = null;
-  
+
   try {
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    await logToSyncLogs(supabase, operationId, 'info', 'Starting TCGCSV categories sync operation');
+
+    // Fetch and normalize categories
+    const categories = await fetchAndNormalizeCategories(operationId, supabase);
     
-    await logToSyncLogs(supabase, operationId, 'info', 'Starting TCGCSV categories sync');
-
-    // Timeout in case upstream hangs
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 15000);
-
-    const r = await fetch(CATEGORIES_URL, { signal: controller.signal });
-    clearTimeout(t);
-
-    // Better diagnostics
-    console.log("TCGCSV HTTP status", r.status);
-    await logToSyncLogs(supabase, operationId, 'info', `TCGCSV HTTP status: ${r.status}`);
-
-    if (!r.ok) {
-      const body = await r.text().catch(() => "");
-      throw new Error(`TCGCSV HTTP ${r.status}: ${body.slice(0, 400)}`);
-    }
-
-    // Parse JSON safely
-    const raw = await r.json().catch(() => ({} as any));
-
-    // Better diagnostics - log payload shape
-    const payloadShape = {
-      isArray: Array.isArray(raw),
-      hasData: Array.isArray(raw?.data),
-      hasCategories: Array.isArray(raw?.categories),
-      length: Array.isArray(raw) ? raw.length : Array.isArray(raw?.data) ? raw.data.length : Array.isArray(raw?.categories) ? raw.categories.length : 0
-    };
-    
-    console.log("Payload shape", payloadShape);
-    await logToSyncLogs(supabase, operationId, 'info', 'Payload shape analysis', payloadShape);
-
-    // Accept common shapes: [], { data: [] }, { categories: [] }
-    let categories: unknown =
-      Array.isArray(raw) ? raw :
-      Array.isArray(raw?.data) ? raw.data :
-      Array.isArray(raw?.categories) ? raw.categories :
-      [];
-
-    if (!Array.isArray(categories)) categories = [];
-
-    // Minimal normalization (so your DB has consistent fields)
-    const normalized = (categories as any[]).map((c, i) => ({
-      tcgcsv_category_id: c?.categoryId ?? c?.id ?? i,
-      name: String(c?.name ?? c?.title ?? "Unknown"),
-      display_name: String(c?.displayName ?? c?.display_name ?? c?.name ?? "Unknown"),
-      modified_on: c?.modifiedOn ? new Date(c.modifiedOn).toISOString() : null,
-      category_group_id: c?.categoryGroupId ?? c?.category_group_id ?? null,
-      raw: c, // keep raw if you need more fields later
-    }));
-
-    await logToSyncLogs(supabase, operationId, 'info', `Normalized ${normalized.length} categories`);
-
-    // OPTIONAL: Upsert to DB here — but only if there's something to write
-    if (normalized.length === 0) {
-      console.warn("No categories returned from TCGCSV; skipping DB upsert.");
-      await logToSyncLogs(supabase, operationId, 'warning', 'No categories returned from TCGCSV; skipping DB upsert');
-      return json({ 
-        success: true, 
-        categories: [], 
-        categoriesCount: 0, 
-        note: "Upstream returned no categories.",
-        operationId 
-      });
-    }
-
-    // Upsert to Supabase
-    try {
-      const { data, error } = await supabase
-        .from('tcgcsv_categories')
-        .upsert(
-          normalized.map(cat => ({
-            tcgcsv_category_id: cat.tcgcsv_category_id,
-            name: cat.name,
-            display_name: cat.display_name,
-            modified_on: cat.modified_on,
-            category_group_id: cat.category_group_id
-          })),
-          { 
-            onConflict: 'tcgcsv_category_id',
-            ignoreDuplicates: false 
-          }
-        );
-
-      if (error) throw new Error(`DB upsert failed: ${error.message}`);
-      
-      await logToSyncLogs(supabase, operationId, 'success', `Successfully synced ${normalized.length} categories to database`);
-      
-    } catch (dbError: any) {
-      await logToSyncLogs(supabase, operationId, 'error', 'Database upsert failed', { error: dbError.message });
-      throw new Error(`DB upsert failed: ${dbError.message}`);
-    }
+    // Sync to database
+    await syncCategoriesToDB(categories, operationId, supabase);
 
     await logToSyncLogs(supabase, operationId, 'success', 'TCGCSV categories sync completed successfully');
 
-    return json({ 
-      success: true, 
-      categories: normalized, 
-      categoriesCount: normalized.length,
+    // Response Shape - Success
+    return json({
+      success: true,
+      categories,
+      categoriesCount: categories.length,
       operationId
     });
-    
-  } catch (err: any) {
-    console.error("sync-tcgcsv-categories error:", err?.message || err);
-    
+
+  } catch (error: any) {
+    console.error("sync-tcgcsv-categories error:", error?.message || error);
+
     if (supabase) {
-      await logToSyncLogs(supabase, operationId, 'error', 'TCGCSV categories sync failed', { error: err?.message || err });
+      await logToSyncLogs(supabase, operationId, 'error', 'TCGCSV sync operation failed', { error: error?.message || error });
     }
-    
+
+    // Response Shape - Failure
     return json(
-      { 
-        success: false, 
-        error: err?.message || "Unknown error", 
-        categories: [], 
+      {
+        success: false,
+        error: error?.message || "Unknown error",
+        categories: [],
         categoriesCount: 0,
         operationId
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 });

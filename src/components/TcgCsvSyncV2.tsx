@@ -41,20 +41,20 @@ export const TcgCsvSyncV2 = () => {
         return;
       }
 
-      // Guard the client - compute count safely
+      // Client-Side Adjustments - compute count safely
       const arr = Array.isArray(data?.categories) ? data.categories : [];
       const count = Number.isFinite(data?.categoriesCount) ? data.categoriesCount : arr.length;
 
       if (count === 0) {
         toast({
-          title: "No categories",
-          description: data?.error || data?.note || "Upstream returned no categories. Check the endpoint response.",
+          title: "No categories returned",
+          description: "No categories returned. Check TCGCSV response or network issues.",
           variant: "destructive",
         });
       } else {
         toast({ 
-          title: "Synced categories", 
-          description: `Processed ${count} categories successfully.` 
+          title: "Categories synced successfully", 
+          description: `Synced ${count} categories` 
         });
         setLastSync(new Date().toLocaleString());
       }
