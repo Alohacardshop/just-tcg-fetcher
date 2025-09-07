@@ -184,6 +184,34 @@ export default function AutomationSettings() {
     }
   };
 
+  const runImageSync = async () => {
+    try {
+      const { error } = await supabase.functions.invoke('sync-images-tcgcsv', {
+        body: { 
+          gameSlug: 'pokemon',
+          categoryId: '3',
+          dryRun: false,
+          forceUpdate: false,
+          background: true
+        }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Image Sync Started",
+        description: "Card image sync has been initiated for Pokémon",
+      });
+    } catch (error) {
+      console.error('Error starting image sync:', error);
+      toast({
+        title: "Error",
+        description: "Failed to start image sync",
+        variant: "destructive",
+      });
+    }
+  };
+
   if (loading) {
     return (
       <div className="container mx-auto p-6">
@@ -275,6 +303,10 @@ export default function AutomationSettings() {
             
             <Button variant="outline" onClick={runManualSync}>
               Run Manual Sync
+            </Button>
+            
+            <Button variant="outline" onClick={runImageSync}>
+              Sync Card Images
             </Button>
           </div>
         </CardContent>
