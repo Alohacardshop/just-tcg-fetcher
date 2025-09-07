@@ -2,10 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { TcgCsvSyncV2 } from '@/components/TcgCsvSyncV2';
-import { TcgCsvGroupsSync } from '@/components/TcgCsvGroupsSync';
-import { TcgCsvProductsSync } from '@/components/TcgCsvProductsSync';
-import { DataImportPanel } from '@/components/DataImportPanel';
+import { TabsDataSources } from '@/components/admin/TabsDataSources';
 import { 
   Download, 
   Database, 
@@ -39,15 +36,11 @@ const DataManager = () => {
         </div>
 
         {/* Main Tabs */}
-        <Tabs defaultValue="tcgcsv" className="space-y-8">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="tcgcsv" className="flex items-center gap-2">
+        <Tabs defaultValue="data-sources" className="space-y-8">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="data-sources" className="flex items-center gap-2">
               <Download className="h-4 w-4" />
-              TCGCSV
-            </TabsTrigger>
-            <TabsTrigger value="justtcg" className="flex items-center gap-2">
-              <Database className="h-4 w-4" />
-              JustTCG
+              Data Sources
             </TabsTrigger>
             <TabsTrigger value="matching" className="flex items-center gap-2">
               <Zap className="h-4 w-4" />
@@ -59,30 +52,8 @@ const DataManager = () => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="tcgcsv" className="space-y-6">
-            <Tabs defaultValue="categories" className="space-y-6">
-              <TabsList>
-                <TabsTrigger value="categories">Categories</TabsTrigger>
-                <TabsTrigger value="groups">Groups</TabsTrigger>
-                <TabsTrigger value="products">Products</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="categories">
-                <TcgCsvSyncV2 />
-              </TabsContent>
-
-              <TabsContent value="groups">
-                <TcgCsvGroupsSync />
-              </TabsContent>
-
-              <TabsContent value="products">
-                <TcgCsvProductsSync />
-              </TabsContent>
-            </Tabs>
-          </TabsContent>
-
-          <TabsContent value="justtcg" className="space-y-6">
-            <DataImportPanel />
+          <TabsContent value="data-sources" className="space-y-6">
+            <TabsDataSources />
           </TabsContent>
 
           <TabsContent value="matching" className="space-y-6">
