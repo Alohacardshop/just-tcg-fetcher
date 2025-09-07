@@ -267,7 +267,7 @@ Deno.serve(async (req) => {
       operation_id: operationId,
       status: 'started',
       message: `Starting image sync for ${gameSlug}`,
-      details: { gameSlug, categoryId, dryRun, forceUpdate }
+      details: { gameSlug, dryRun, forceUpdate }
     })
 
     const syncOperation = async () => {
