@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { SearchFilters } from '@/components/SearchFilters';
 import { DataImportPanel } from '@/components/DataImportPanel';
+import DataManager from './DataManager';
 import { GameCard } from '@/components/GameCard';
 import { SetCard } from '@/components/SetCard';
 import { CardGrid } from '@/components/CardGrid';
@@ -219,7 +220,7 @@ const Index = () => {
               localStorage.setItem('index-active-tab', value);
             }
           }} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-5 bg-card border border-border">
+            <TabsList className="grid w-full grid-cols-4 bg-card border border-border">
               <TabsTrigger value="overview" className="flex items-center gap-2">
                 <Database className="h-4 w-4" />
                 Overview
@@ -232,9 +233,9 @@ const Index = () => {
                 <Search className="h-4 w-4" />
                 Search Cards
               </TabsTrigger>
-              <TabsTrigger value="tcgcsv" className="flex items-center gap-2">
+              <TabsTrigger value="data-manager" className="flex items-center gap-2">
                 <Download className="h-4 w-4" />
-                TCG CSV Sync
+                Data Manager
               </TabsTrigger>
               <TabsTrigger value="import" className="flex items-center gap-2">
                 <Download className="h-4 w-4" />
@@ -308,8 +309,8 @@ const Index = () => {
               )}
             </TabsContent>
 
-            <TabsContent value="tcgcsv" className="space-y-6">
-              <TcgCsvSyncV2 />
+            <TabsContent value="data-manager" className="space-y-6">
+              <DataManager />
             </TabsContent>
 
             <TabsContent value="import" className="space-y-6">

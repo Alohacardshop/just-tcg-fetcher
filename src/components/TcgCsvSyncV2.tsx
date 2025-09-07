@@ -172,11 +172,12 @@ export const TcgCsvSyncV2 = () => {
   // Clear data mutation
   const clearDataMutation = useMutation({
     mutationFn: async () => {
-      const tables = ['tcgcsv_products', 'tcgcsv_groups', 'tcgcsv_categories'];
+      // Clear TCGCSV data manually
+      const tablesToClear = ['tcgcsv_products', 'tcgcsv_groups', 'tcgcsv_categories'];
       
-      // Clear data using RPC or individual table operations
-      const { error } = await supabase.rpc('clear_tcgcsv_data');
-      if (error) throw error;
+      for (const table of tablesToClear) {
+        await supabase.from(table as any).delete().gte('id', '0');
+      }
     },
     onSuccess: () => {
       toast({

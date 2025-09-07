@@ -43,10 +43,10 @@ const menuItems = [
     description: "Automated sync settings"
   },
   {
-    title: "Matching",
-    url: "/matching",
+    title: "Data Manager",
+    url: "/data",
     icon: Zap,
-    description: "AI-powered card matching"
+    description: "TCGCSV, JustTCG & Matching"
   },
 ];
 
