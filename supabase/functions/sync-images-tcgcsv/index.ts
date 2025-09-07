@@ -10,6 +10,7 @@ interface TcgCsvProduct {
   name: string
   cleanName: string
   imageUrl?: string
+  url?: string
   number?: string
   groupId: number
 }
@@ -167,7 +168,8 @@ async function syncImagesForGame(
           cardsToUpdate.push({
             id: card.id,
             imageUrl: matchingProduct.imageUrl,
-            productId: matchingProduct.productId
+            productId: matchingProduct.productId,
+            productUrl: matchingProduct.url
           })
           console.log(`Matched card: ${card.name} -> ${matchingProduct.imageUrl}`)
         } else {
@@ -180,7 +182,11 @@ async function syncImagesForGame(
         for (const cardUpdate of cardsToUpdate) {
           const { error } = await supabaseClient
             .from('cards')
-            .update({ image_url: cardUpdate.imageUrl })
+            .update({ 
+              image_url: cardUpdate.imageUrl,
+              tcgplayer_product_id: cardUpdate.productId,
+              product_url: cardUpdate.productUrl
+            })
             .eq('id', cardUpdate.id)
 
           if (error) {
