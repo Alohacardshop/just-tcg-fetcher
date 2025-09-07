@@ -67,15 +67,8 @@ export const GroupsCard = () => {
     }
 
     setSyncLoading(true);
-    let controller: AbortController | null = null;
 
     try {
-      // Create timeout controller
-      controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        controller?.abort();
-      }, 20000); // 20s timeout
-
       const payload = { categoryId: Number(selectedCategoryId), dryRun: false };
       
       // Network logging
@@ -85,28 +78,46 @@ export const GroupsCard = () => {
         timestamp: new Date().toISOString() 
       });
 
-      // Manual fetch with timeout to sync-tcgcsv-groups-csv-fast
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      
-      const response = await fetch(`${supabaseUrl}/functions/v1/sync-tcgcsv-groups-csv-fast`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${supabaseAnonKey}`,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
+      // Use invokeFn with proper JWT handling
+      const { data: result, error: invokeFnError, status } = await invokeFn<GroupsCsvResp>(
+        'sync-tcgcsv-groups-csv-fast', 
+        payload
+      );
 
-      clearTimeout(timeoutId);
+      // Handle 401 auth errors
+      if (status === 401) {
+        toast({
+          title: "Authentication required",
+          description: "Your session expired. Please sign in and retry.",
+          variant: "destructive",
+        });
+        return;
+      }
 
-      const result: GroupsCsvResp = await response.json();
+      // Handle invokeFn errors
+      if (invokeFnError) {
+        console.error('InvokeFn error:', invokeFnError);
+        toast({
+          title: "Function call failed", 
+          description: invokeFnError.message || "Unknown error",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (!result) {
+        toast({
+          title: "No response",
+          description: "Function returned no data",
+          variant: "destructive", 
+        });
+        return;
+      }
       setLastResponse(result);
       
       console.log('Function response:', { 
         fn: 'sync-tcgcsv-groups-csv-fast', 
-        status: response.status, 
+        status, 
         success: result.success,
         result 
       });
@@ -174,9 +185,6 @@ export const GroupsCard = () => {
       }
     } finally {
       setSyncLoading(false);
-      if (controller) {
-        controller.abort();
-      }
     }
   };
 
