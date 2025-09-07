@@ -454,7 +454,9 @@ serve(async (req) => {
       includeSealed = true, 
       includeSingles = true, 
       dryRun = false,
-      maxConcurrency
+      maxConcurrency,
+      page = 1,
+      pageSize = 25
     } = await req.json();
     
     if (!categoryId || !Number.isInteger(categoryId)) {
@@ -532,8 +534,8 @@ serve(async (req) => {
     let totalUpserted = 0;
     let totalSkipped = 0;
     
-    // Process groups with high concurrency
-    const promises = targetGroups.map(async (group) => {
+    // Process groups with controlled concurrency, page slice only
+    const promises = groupsToProcess.map(async (group) => {
       await controller.acquire();
       
       try {
@@ -592,8 +594,8 @@ serve(async (req) => {
     const responseBody = {
       success: true,
       categoryId,
-      groupsProcessed: targetGroups.length,
-      groupIdsResolved: targetGroups.map(g => g.group_id),
+      groupsProcessed: groupsToProcess.length,
+      groupIdsResolved: groupsToProcess.map(g => g.group_id),
       summary: {
         fetched: totalFetched,
         upserted: totalUpserted,
@@ -603,6 +605,7 @@ serve(async (req) => {
       },
       perGroup: perGroupResults.sort((a, b) => a.groupId - b.groupId),
       dryRun,
+      pagination: { page: p, pageSize: size, nextPage, hasMore, totalGroups },
       operationId
     };
     
