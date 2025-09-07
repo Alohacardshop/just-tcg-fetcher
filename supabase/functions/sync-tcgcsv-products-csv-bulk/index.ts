@@ -108,7 +108,7 @@ async function fetchAndParseProducts(
   ms: number;
   error?: string;
 }> {
-  const url = `https://tcgcsv.com/tcgplayer/groups/${groupId}/products.csv`;
+  const url = `https://tcgcsv.com/tcgplayer/${categoryId}/${groupId}/ProductsAndPrices.csv`;
   const startTime = Date.now();
   let bytesProcessed = 0;
   
