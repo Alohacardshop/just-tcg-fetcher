@@ -295,59 +295,112 @@ async function matchProductsToCards(supabase: any, gameId: string, operationId: 
           const extractedNumber = extractCardNumberFromName(product.name)
           const normalizedProductName = normalizeCardName(product.name)
           
-          // Strategy 1: Try number field first (if available)
-          if (product.number) {
-            const normalizedProductNumber = normalizeCardNumber(product.number)
-            
+          if (strategy === 'name-first') {
+            // Name-first strategy: Prioritize exact name matches
+            // Strategy 1: Try exact name matches first
             for (const card of cards) {
-              if (card.number && normalizeCardNumber(card.number) === normalizedProductNumber) {
+              if (normalizeCardName(card.name) === normalizedProductName) {
                 matchedCard = card
-                matchMethod = 'number_field'
+                matchMethod = 'name_exact'
                 confidence = 1.0
-                numberMatches++
+                nameMatches++
                 break
               }
             }
-          }
-          
-          // Strategy 2: Try extracted number from name + name similarity
-          if (!matchedCard && extractedNumber) {
-            const normalizedExtractedNumber = normalizeCardNumber(extractedNumber)
-            
-            for (const card of cards) {
-              // Check if card number matches extracted number
-              if (card.number && normalizeCardNumber(card.number) === normalizedExtractedNumber) {
-                // Also check name similarity for additional confidence
+
+            // Strategy 2: Try high similarity names
+            if (!matchedCard) {
+              let bestScore = 0
+              let bestCard = null
+              
+              for (const card of cards) {
                 const nameScore = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
-                if (nameScore >= 0.6) { // Lower threshold since we have number match
+                if (nameScore > bestScore && nameScore >= 0.9) {
+                  bestScore = nameScore
+                  bestCard = card
+                }
+              }
+              
+              if (bestCard) {
+                matchedCard = bestCard
+                matchMethod = 'name_high_similarity'
+                confidence = bestScore
+                nameMatches++
+              }
+            }
+
+            // Strategy 3: Use number as tiebreaker if multiple high matches
+            if (matchedCard && confidence >= 0.9 && product.number) {
+              const normalizedProductNumber = normalizeCardNumber(product.number)
+              for (const card of cards) {
+                if (card.number && normalizeCardNumber(card.number) === normalizedProductNumber) {
+                  const nameScore = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
+                  if (nameScore >= 0.8) {
+                    matchedCard = card
+                    matchMethod = 'name_number_combo'
+                    confidence = 1.0
+                    numberMatches++
+                    break
+                  }
+                }
+              }
+            }
+          } else {
+            // Standard strategy: Number first, then name
+            // Strategy 1: Try number field first (if available)
+            if (product.number) {
+              const normalizedProductNumber = normalizeCardNumber(product.number)
+              
+              for (const card of cards) {
+                if (card.number && normalizeCardNumber(card.number) === normalizedProductNumber) {
                   matchedCard = card
-                  matchMethod = 'extracted_number_and_name'
-                  confidence = 0.9
+                  matchMethod = 'number_field'
+                  confidence = 1.0
                   numberMatches++
                   break
                 }
               }
             }
-          }
-          
-          // Strategy 3: Pure name matching (for sets with reasonable size)
-          if (!matchedCard && cards.length < 300) {
-            let bestScore = 0
-            let bestCard = null
             
-            for (const card of cards) {
-              const nameScore = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
-              if (nameScore > bestScore && nameScore >= 0.85) { // Higher threshold for name-only
-                bestScore = nameScore
-                bestCard = card
+            // Strategy 2: Try extracted number from name + name similarity
+            if (!matchedCard && extractedNumber) {
+              const normalizedExtractedNumber = normalizeCardNumber(extractedNumber)
+              
+              for (const card of cards) {
+                // Check if card number matches extracted number
+                if (card.number && normalizeCardNumber(card.number) === normalizedExtractedNumber) {
+                  // Also check name similarity for additional confidence
+                  const nameScore = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
+                  if (nameScore >= 0.6) { // Lower threshold since we have number match
+                    matchedCard = card
+                    matchMethod = 'extracted_number_and_name'
+                    confidence = 0.9
+                    numberMatches++
+                    break
+                  }
+                }
               }
             }
             
-            if (bestCard) {
-              matchedCard = bestCard
-              matchMethod = 'name_only'
-              confidence = bestScore
-              nameMatches++
+            // Strategy 3: Pure name matching (for sets with reasonable size)
+            if (!matchedCard && cards.length < 300) {
+              let bestScore = 0
+              let bestCard = null
+              
+              for (const card of cards) {
+                const nameScore = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
+                if (nameScore > bestScore && nameScore >= 0.85) { // Higher threshold for name-only
+                  bestScore = nameScore
+                  bestCard = card
+                }
+              }
+              
+              if (bestCard) {
+                matchedCard = bestCard
+                matchMethod = 'name_only'
+                confidence = bestScore
+                nameMatches++
+              }
             }
           }
           

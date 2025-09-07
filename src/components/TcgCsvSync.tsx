@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Download, CheckCircle, XCircle, Database, MapPin, ArrowRight } from 'lucide-react';
+import { Loader2, Download, CheckCircle, XCircle, Database, MapPin, ArrowRight, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Game {
@@ -417,9 +417,19 @@ export function TcgCsvSync() {
                       onClick={() => handleMatch('products')}
                       disabled={!selectedGameSlug || matchMutation.isPending}
                     >
-                      Match Products→Cards Only
+                      Match Products (Standard)
                     </Button>
                   </div>
+                  
+                  <Button 
+                    variant="secondary"
+                    onClick={() => handleMatch('products-name-first')}
+                    disabled={!selectedGameSlug || matchMutation.isPending}
+                    className="w-full"
+                  >
+                    <Search className="mr-2 h-4 w-4" />
+                    Match by Name (Quick & Accurate)
+                  </Button>
                 </div>
               </div>
             </TabsContent>
