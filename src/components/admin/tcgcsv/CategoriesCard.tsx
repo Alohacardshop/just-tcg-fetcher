@@ -9,7 +9,7 @@ import { formatRelativeTime, pluralize, truncateText } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 
 export const CategoriesCard = () => {
-  const { data, loading, invoke } = useEdgeFn('sync-tcgcsv-categories-csv');
+  const { data, loading, invoke } = useEdgeFn('sync-tcgcsv-categories-csv-fast');
   const [lastRun, setLastRun] = React.useState<any>(null);
 
   const handleSync = async () => {
@@ -76,7 +76,7 @@ export const CategoriesCard = () => {
             ) : (
               <Download className="h-4 w-4" />
             )}
-            {loading ? 'Syncing...' : 'Fetch & Normalize Categories'}
+            {loading ? 'Syncing...' : 'Fetch & Normalize Categories (CSV)'}
           </Button>
         </div>
 

@@ -73,16 +73,16 @@ export const GroupsCard = () => {
       
       // Network logging
       console.log('Invoking function:', { 
-        fn: 'sync-tcgcsv-groups-csv', 
+        fn: 'sync-tcgcsv-groups-csv-fast',
         payload, 
         timestamp: new Date().toISOString() 
       });
 
-      // Manual fetch with timeout
+      // Manual fetch with timeout to sync-tcgcsv-groups-csv-fast
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
       
-      const response = await fetch(`${supabaseUrl}/functions/v1/sync-tcgcsv-groups-csv`, {
+      const response = await fetch(`${supabaseUrl}/functions/v1/sync-tcgcsv-groups-csv-fast`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -98,7 +98,7 @@ export const GroupsCard = () => {
       setLastResponse(result);
       
       console.log('Function response:', { 
-        fn: 'sync-tcgcsv-groups-csv', 
+        fn: 'sync-tcgcsv-groups-csv-fast', 
         status: response.status, 
         success: result.success,
         result 
@@ -231,7 +231,7 @@ export const GroupsCard = () => {
             ) : (
               <Layers className="h-4 w-4" />
             )}
-            Sync Groups for Category
+            Sync Groups for Category (CSV)
           </Button>
         </div>
 

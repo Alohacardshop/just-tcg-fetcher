@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CategoriesCard } from './tcgcsv/CategoriesCard';
 import { GroupsCard } from './tcgcsv/GroupsCard';
-import { ProductsSelectiveCard } from './tcgcsv/ProductsSelectiveCard';
+import { ProductsBulkCard } from './tcgcsv/ProductsBulkCard';
 import { DataImportPanel } from '../DataImportPanel';
 
 export const TabsDataSources = () => {
@@ -32,7 +32,7 @@ export const TabsDataSources = () => {
         <div className="space-y-6">
           <CategoriesCard />
           <GroupsCard />
-          <ProductsSelectiveCard />
+          <ProductsBulkCard />
         </div>
       </TabsContent>
 
