@@ -118,8 +118,10 @@ export type Database = {
           jt_card_id: string
           name: string
           number: string | null
+          product_url: string | null
           rarity: string | null
           set_id: string
+          tcgplayer_product_id: number | null
           updated_at: string
         }
         Insert: {
@@ -131,8 +133,10 @@ export type Database = {
           jt_card_id: string
           name: string
           number?: string | null
+          product_url?: string | null
           rarity?: string | null
           set_id: string
+          tcgplayer_product_id?: number | null
           updated_at?: string
         }
         Update: {
@@ -144,8 +148,10 @@ export type Database = {
           jt_card_id?: string
           name?: string
           number?: string | null
+          product_url?: string | null
           rarity?: string | null
           set_id?: string
+          tcgplayer_product_id?: number | null
           updated_at?: string
         }
         Relationships: [
