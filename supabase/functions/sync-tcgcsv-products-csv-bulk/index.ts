@@ -218,6 +218,7 @@ async function fetchAndParseProducts(
           );
           
           if (!productIdCol || !nameCol) {
+            console.log(`[${operationId}] Skipping row - missing columns. ProductIdCol: ${productIdCol}, NameCol: ${nameCol}, Available keys: ${Object.keys(normalizedRow).join(', ')}`);
             skipped++;
             continue;
           }
@@ -227,6 +228,7 @@ async function fetchAndParseProducts(
           const productType = productTypeCol ? normalizedRow[productTypeCol] : null;
           
           if (!Number.isFinite(productId) || !name) {
+            console.log(`[${operationId}] Skipping row - invalid data. ProductId: ${productId} (finite: ${Number.isFinite(productId)}), Name: "${name}" (length: ${name?.length || 0})`);
             skipped++;
             continue;
           }
@@ -235,6 +237,7 @@ async function fetchAndParseProducts(
           if (!includeSealed && productType) {
             const isActualSealedProduct = /^(sealed|pack|box|tin|bundle|collection|booster|starter|theme deck|deck|case)$/i.test(productType.trim());
             if (isActualSealedProduct) {
+              console.log(`[${operationId}] Skipping sealed product: ${name} (type: ${productType})`);
               skipped++;
               continue;
             }
@@ -243,10 +246,14 @@ async function fetchAndParseProducts(
           if (!includeSingles && productType) {
             const isActualSingleCard = /^(single|card|single card)$/i.test(productType.trim());
             if (isActualSingleCard) {
+              console.log(`[${operationId}] Skipping single card: ${name} (type: ${productType})`);
               skipped++;
               continue;
             }
           }
+          
+          // Product accepted for processing
+          console.log(`[${operationId}] Processing product: ${name} (ID: ${productId}, type: ${productType})`);}
           
           // Build extended_data object from all additional columns  
           const extendedData: any = {};
