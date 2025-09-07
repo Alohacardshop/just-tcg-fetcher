@@ -65,6 +65,7 @@ class StreamingCSVParser {
       
       if (!this.headersParsed) {
         this.headers = this.splitCsv(line).map(h => h.trim().toLowerCase());
+        console.log(`[BULK] CSV Headers:`, this.headers);
         this.headersParsed = true;
         continue;
       }

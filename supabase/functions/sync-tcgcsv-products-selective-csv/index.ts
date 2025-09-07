@@ -173,14 +173,28 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
       const headers = parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
       const rows = lines.slice(1);
 
-      // Find required columns
-      const productIdIdx = headers.findIndex(h => h.includes('productid') || h.includes('product_id'));
-      const nameIdx = headers.findIndex(h => h.includes('productname') || h.includes('name'));
-      const numberIdx = headers.findIndex(h => h.includes('number'));
-      const rarityIdx = headers.findIndex(h => h.includes('rarity'));
-      const productTypeIdx = headers.findIndex(h => h.includes('producttype') || h.includes('product_type'));
-      const slugIdx = headers.findIndex(h => h.includes('slug'));
-      const extendedDataIdx = headers.findIndex(h => h.includes('extendeddata') || h.includes('extended_data'));
+      // Normalize headers for better matching
+      const normalizedHeaders = headers.map(h => h.replace(/[^a-z0-9]/g, ''));
+      
+      // Find required columns with multiple possible names
+      const productIdIdx = normalizedHeaders.findIndex(h => 
+        h === 'productid' || h === 'id' || h.includes('productid')
+      );
+      const nameIdx = normalizedHeaders.findIndex(h => 
+        h === 'name' || h === 'productname' || h.includes('name')
+      );
+      const numberIdx = normalizedHeaders.findIndex(h => h.includes('number'));
+      const rarityIdx = normalizedHeaders.findIndex(h => h.includes('rarity'));
+      const productTypeIdx = normalizedHeaders.findIndex(h => 
+        h.includes('producttype') || h.includes('type')
+      );
+      const slugIdx = normalizedHeaders.findIndex(h => h.includes('slug'));
+      const extendedDataIdx = normalizedHeaders.findIndex(h => 
+        h.includes('extendeddata') || h.includes('extended')
+      );
+
+      console.log(`[${operationId}] Headers: ${headers.join(', ')}`);
+      console.log(`[${operationId}] Found columns - ProductID: ${productIdIdx}, Name: ${nameIdx}, Type: ${productTypeIdx}`);
 
       if (productIdIdx === -1 || nameIdx === -1) {
         return {
@@ -195,17 +209,44 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
       }
 
       const normalized: any[] = [];
+      const skipReasons: Record<string, number> = {};
       let skipped = 0;
+
+      const addSkipReason = (reason: string, details?: string) => {
+        const key = details ? `${reason}: ${details}` : reason;
+        skipReasons[key] = (skipReasons[key] || 0) + 1;
+        skipped++;
+      };
 
       for (const row of rows) {
         const cols = parseCsvLine(row);
         
-        const productId = Number(cols[productIdIdx]);
-        const name = cols[nameIdx];
-        
-        if (!Number.isFinite(productId) || !name) {
-          skipped++;
+        if (cols.length === 0 || cols.every(c => !c.trim())) {
+          addSkipReason('EMPTY_ROW');
           continue;
+        }
+        
+        const productId = Number(cols[productIdIdx]);
+        const name = cols[nameIdx]?.trim();
+        const productType = productTypeIdx >= 0 ? cols[productTypeIdx]?.trim() : '';
+        
+        if (!Number.isFinite(productId) || productId <= 0) {
+          addSkipReason('INVALID_PRODUCT_ID', cols[productIdIdx] || 'missing');
+          continue;
+        }
+        
+        if (!name) {
+          addSkipReason('MISSING_NAME');
+          continue;
+        }
+        
+        // Type filtering logic (if needed)
+        if (productType) {
+          const isSealed = /sealed|pack|box|tin|bundle|collection/i.test(productType);
+          const isSingle = /single|card/i.test(productType) || !isSealed;
+          
+          // Add filtering based on includeSealed/includeSingles if those params exist
+          // For now, we'll include everything but track the type
         }
         
         normalized.push({
@@ -216,11 +257,16 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
           clean_name: name.toLowerCase().trim(),
           number: numberIdx >= 0 ? cols[numberIdx] || null : null,
           rarity: rarityIdx >= 0 ? cols[rarityIdx] || null : null,
-          product_type: productTypeIdx >= 0 ? cols[productTypeIdx] || null : null,
+          product_type: productType || null,
           url_slug: slugIdx >= 0 ? cols[slugIdx] || kebab(name) : kebab(name),
           extended_data: extendedDataIdx >= 0 ? cols[extendedDataIdx] || null : null,
           updated_at: new Date().toISOString()
         });
+      }
+
+      // Log skip reasons for debugging
+      if (skipped > 0) {
+        console.log(`[${operationId}] Group ${groupId} skip reasons:`, skipReasons);
       }
 
       return {
@@ -230,7 +276,8 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
         products: normalized,
         fetched: rows.length,
         upserted: 0, // Will be set after DB operation
-        skipped
+        skipped,
+        skipReasons
       };
 
     } catch (error: any) {
@@ -433,9 +480,24 @@ serve(async (req) => {
         fetched: r.fetched || 0,
         upserted: r.upserted || 0,
         skipped: r.skipped || 0,
+        skipReasons: r.skipReasons || {},
         error: r.error || null
       }))
     };
+
+    // Log overall skip summary
+    const allSkipReasons: Record<string, number> = {};
+    results.forEach(r => {
+      if (r.skipReasons) {
+        Object.entries(r.skipReasons).forEach(([reason, count]) => {
+          allSkipReasons[reason] = (allSkipReasons[reason] || 0) + count;
+        });
+      }
+    });
+    
+    if (Object.keys(allSkipReasons).length > 0) {
+      console.log(`[${operationId}] Overall skip reasons:`, allSkipReasons);
+    }
 
     await logToSyncLogs(supabase, operationId, 'success', 'Products selective CSV sync completed', summary);
 
@@ -445,6 +507,7 @@ serve(async (req) => {
       groupsProcessed: targetGroups.length,
       groupIdsResolved: targetGroups.map(g => g.group_id),
       summary,
+      skipReasons: allSkipReasons,
       emptyGroups,
       dryRun,
       operationId
