@@ -30,3 +30,9 @@ verify_jwt = false
 
 [functions.proxy-pricing]
 verify_jwt = true
+
+[functions.tcgcsv-fetch-all]
+verify_jwt = false
+
+[functions.tcgcsv-match]
+verify_jwt = false

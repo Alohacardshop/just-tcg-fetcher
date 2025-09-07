@@ -99,7 +99,7 @@ async function upsertGroups(supabase: any, groups: any[], gameId: string, catego
   for (let i = 0; i < groups.length; i += batchSize) {
     const batch = groups.slice(i, i + batchSize)
     const records = batch.map(group => ({
-      group_id: group.groupId.toString(),
+      group_id: (group.groupId || group.id || group.group_id)?.toString(),
       category_id: categoryId,
       game_id: gameId,
       name: group.name,
@@ -132,14 +132,14 @@ async function upsertProducts(supabase: any, products: any[], gameId: string, ca
   for (let i = 0; i < products.length; i += batchSize) {
     const batch = products.slice(i, i + batchSize)
     const records = batch.map(product => ({
-      product_id: product.productId.toString(),
-      group_id: product.groupId.toString(),
+      product_id: (product.productId || product.id || product.product_id)?.toString(),
+      group_id: (product.groupId || product.group_id)?.toString(),
       category_id: categoryId,
       game_id: gameId,
       name: product.name,
       number: parseCardNumber(product.name),
       url: product.url || null,
-      image_url: selectBestImageUrl(product.imageUrl),
+      image_url: selectBestImageUrl(product.imageUrl || product.image_url),
       data: product
     }))
     
@@ -175,10 +175,37 @@ async function fetchAllData(gameId: string, categoryId: string, operationId: str
     // Fetch all groups
     await logToSyncLogs(supabase, operationId, 'progress', 'Fetching TCGCSV groups')
     const groupsUrl = `https://tcgcsv.com/tcgplayer/${categoryId}/groups`
-    const groupsData = await fetchWithRetry(groupsUrl)
+    const groupsResponse = await fetchWithRetry(groupsUrl)
     
-    if (!Array.isArray(groupsData)) {
-      throw new Error('Groups data is not an array')
+    // Handle various response shapes from TCGCSV API
+    let groupsData
+    if (Array.isArray(groupsResponse)) {
+      groupsData = groupsResponse
+    } else if (groupsResponse && typeof groupsResponse === 'object') {
+      // Check for common wrapper properties
+      if (Array.isArray(groupsResponse.data)) {
+        groupsData = groupsResponse.data
+      } else if (Array.isArray(groupsResponse.groups)) {
+        groupsData = groupsResponse.groups
+      } else if (Array.isArray(groupsResponse.results)) {
+        groupsData = groupsResponse.results
+      } else {
+        // If it's an object but not wrapped, treat as single item
+        groupsData = [groupsResponse]
+      }
+    } else {
+      throw new Error(`Invalid groups response format. Expected array or object with data property, got: ${typeof groupsResponse}`)
+    }
+    
+    if (!Array.isArray(groupsData) || groupsData.length === 0) {
+      console.warn('No groups found for category', categoryId)
+      await logToSyncLogs(supabase, operationId, 'warning', `No groups found for category ${categoryId}`)
+      return {
+        success: true,
+        groupsUpserted: 0,
+        productsUpserted: 0,
+        message: 'No groups found for this category'
+      }
     }
     
     console.log(`Found ${groupsData.length} groups`)
@@ -194,20 +221,41 @@ async function fetchAllData(gameId: string, categoryId: string, operationId: str
       limit(async () => {
         try {
           const productsUrl = `https://tcgcsv.com/tcgplayer/${categoryId}/${group.groupId}/products`
-          const productsData = await fetchWithRetry(productsUrl)
+          const productsResponse = await fetchWithRetry(productsUrl)
           
-          if (Array.isArray(productsData)) {
-            // Add groupId to each product
+          // Handle various response shapes for products too
+          let productsData
+          if (Array.isArray(productsResponse)) {
+            productsData = productsResponse
+          } else if (productsResponse && typeof productsResponse === 'object') {
+            if (Array.isArray(productsResponse.data)) {
+              productsData = productsResponse.data
+            } else if (Array.isArray(productsResponse.products)) {
+              productsData = productsResponse.products
+            } else if (Array.isArray(productsResponse.results)) {
+              productsData = productsResponse.results
+            } else {
+              productsData = [productsResponse]
+            }
+          } else {
+            productsData = []
+          }
+          
+          if (Array.isArray(productsData) && productsData.length > 0) {
+            // Normalize product IDs and add groupId to each product
             const productsWithGroup = productsData.map(product => ({
               ...product,
-              groupId: group.groupId
+              productId: product.productId || product.id || product.product_id,
+              groupId: group.groupId || group.id || group.group_id
             }))
             allProducts.push(...productsWithGroup)
             
             processedGroups++
             if (processedGroups % 10 === 0) {
-              console.log(`Processed ${processedGroups}/${groupsData.length} groups`)
+              console.log(`Processed ${processedGroups}/${groupsData.length} groups, found ${allProducts.length} products so far`)
             }
+          } else {
+            console.log(`No products found for group ${group.groupId} (${group.name})`)
           }
         } catch (error) {
           console.error(`Error fetching products for group ${group.groupId}:`, error)
