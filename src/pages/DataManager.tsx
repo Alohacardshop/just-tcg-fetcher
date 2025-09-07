@@ -3,6 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { TcgCsvSyncV2 } from '@/components/TcgCsvSyncV2';
+import { TcgCsvGroupsSync } from '@/components/TcgCsvGroupsSync';
+import { TcgCsvProductsSync } from '@/components/TcgCsvProductsSync';
 import { DataImportPanel } from '@/components/DataImportPanel';
 import { 
   Download, 
@@ -58,7 +60,25 @@ const DataManager = () => {
           </TabsList>
 
           <TabsContent value="tcgcsv" className="space-y-6">
-            <TcgCsvSyncV2 />
+            <Tabs defaultValue="categories" className="space-y-6">
+              <TabsList>
+                <TabsTrigger value="categories">Categories</TabsTrigger>
+                <TabsTrigger value="groups">Groups</TabsTrigger>
+                <TabsTrigger value="products">Products</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="categories">
+                <TcgCsvSyncV2 />
+              </TabsContent>
+
+              <TabsContent value="groups">
+                <TcgCsvGroupsSync />
+              </TabsContent>
+
+              <TabsContent value="products">
+                <TcgCsvProductsSync />
+              </TabsContent>
+            </Tabs>
           </TabsContent>
 
           <TabsContent value="justtcg" className="space-y-6">

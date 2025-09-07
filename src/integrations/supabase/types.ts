@@ -110,6 +110,96 @@ export type Database = {
         }
         Relationships: []
       }
+      tcgcsv_groups: {
+        Row: {
+          abbreviation: string | null
+          category_id: number
+          created_at: string
+          group_id: number
+          id: string
+          is_supplemental: boolean | null
+          name: string
+          release_date: string | null
+          sealed_product: boolean | null
+          updated_at: string
+          url_slug: string | null
+        }
+        Insert: {
+          abbreviation?: string | null
+          category_id: number
+          created_at?: string
+          group_id: number
+          id?: string
+          is_supplemental?: boolean | null
+          name: string
+          release_date?: string | null
+          sealed_product?: boolean | null
+          updated_at?: string
+          url_slug?: string | null
+        }
+        Update: {
+          abbreviation?: string | null
+          category_id?: number
+          created_at?: string
+          group_id?: number
+          id?: string
+          is_supplemental?: boolean | null
+          name?: string
+          release_date?: string | null
+          sealed_product?: boolean | null
+          updated_at?: string
+          url_slug?: string | null
+        }
+        Relationships: []
+      }
+      tcgcsv_products: {
+        Row: {
+          category_id: number
+          clean_name: string
+          created_at: string
+          extended_data: Json | null
+          group_id: number
+          id: string
+          name: string
+          number: string | null
+          product_id: number
+          product_type: string | null
+          rarity: string | null
+          updated_at: string
+          url_slug: string | null
+        }
+        Insert: {
+          category_id: number
+          clean_name: string
+          created_at?: string
+          extended_data?: Json | null
+          group_id: number
+          id?: string
+          name: string
+          number?: string | null
+          product_id: number
+          product_type?: string | null
+          rarity?: string | null
+          updated_at?: string
+          url_slug?: string | null
+        }
+        Update: {
+          category_id?: number
+          clean_name?: string
+          created_at?: string
+          extended_data?: Json | null
+          group_id?: number
+          id?: string
+          name?: string
+          number?: string | null
+          product_id?: number
+          product_type?: string | null
+          rarity?: string | null
+          updated_at?: string
+          url_slug?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
