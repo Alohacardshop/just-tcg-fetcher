@@ -170,9 +170,6 @@ function processGroupRow(row: any, categoryId: number): any | null {
   const isSupplementalCol = Object.keys(row).find(k => 
     k.includes('issupplemental') || k.includes('is_supplemental')
   );
-  const popularityCol = Object.keys(row).find(k => 
-    k.includes('popularity')
-  );
   const slugCol = Object.keys(row).find(k => 
     k.includes('slug')
   );
@@ -185,7 +182,6 @@ function processGroupRow(row: any, categoryId: number): any | null {
     release_date: releaseDateCol ? row[releaseDateCol] || null : null,
     is_supplemental: isSupplementalCol ? toBool(row[isSupplementalCol]) : null,
     sealed_product: sealedProductCol ? toBool(row[sealedProductCol]) : null,
-    popularity: popularityCol ? Number(row[popularityCol]) || null : null,
     url_slug: slugCol ? row[slugCol] || kebab(name) : kebab(name),
     updated_at: new Date().toISOString()
   };
