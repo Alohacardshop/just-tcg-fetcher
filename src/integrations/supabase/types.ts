@@ -227,7 +227,6 @@ export type Database = {
           name: string
           sets_count: number | null
           slug: string | null
-          tcgcsv_category_id: string | null
           updated_at: string
         }
         Insert: {
@@ -239,7 +238,6 @@ export type Database = {
           name: string
           sets_count?: number | null
           slug?: string | null
-          tcgcsv_category_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -251,7 +249,6 @@ export type Database = {
           name?: string
           sets_count?: number | null
           slug?: string | null
-          tcgcsv_category_id?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -389,7 +386,6 @@ export type Database = {
           resume_token: string | null
           sealed_synced_count: number
           sync_status: string
-          tcgcsv_group_id: string | null
           total_cards: number | null
           updated_at: string
         }
@@ -408,7 +404,6 @@ export type Database = {
           resume_token?: string | null
           sealed_synced_count?: number
           sync_status?: string
-          tcgcsv_group_id?: string | null
           total_cards?: number | null
           updated_at?: string
         }
@@ -427,7 +422,6 @@ export type Database = {
           resume_token?: string | null
           sealed_synced_count?: number
           sync_status?: string
-          tcgcsv_group_id?: string | null
           total_cards?: number | null
           updated_at?: string
         }
