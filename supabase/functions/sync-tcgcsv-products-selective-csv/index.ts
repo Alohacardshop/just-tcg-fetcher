@@ -181,12 +181,16 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
         h === 'productid' || h === 'id' || h.includes('productid')
       );
       const nameIdx = normalizedHeaders.findIndex(h => 
-        h === 'name' || h === 'productname' || h.includes('name')
+        h === 'name' || h === 'productname' || h.includes('name') || h === 'cleanname'
       );
-      const numberIdx = normalizedHeaders.findIndex(h => h.includes('number'));
-      const rarityIdx = normalizedHeaders.findIndex(h => h.includes('rarity'));
+      const numberIdx = normalizedHeaders.findIndex(h => 
+        h.includes('number') || h === 'extnumber'
+      );
+      const rarityIdx = normalizedHeaders.findIndex(h => 
+        h.includes('rarity') || h === 'extrarity'
+      );
       const productTypeIdx = normalizedHeaders.findIndex(h => 
-        h.includes('producttype') || h.includes('type')
+        h.includes('producttype') || h.includes('type') || h === 'extcardtype'
       );
       const slugIdx = normalizedHeaders.findIndex(h => h.includes('slug'));
       const extendedDataIdx = normalizedHeaders.findIndex(h => 
@@ -249,6 +253,16 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
           // For now, we'll include everything but track the type
         }
         
+        // Build extended_data object from all additional columns
+        const extendedData: any = {};
+        for (let i = 0; i < headers.length; i++) {
+          const header = headers[i];
+          const value = cols[i];
+          if (value && ![productIdIdx, nameIdx, numberIdx, rarityIdx, productTypeIdx, slugIdx].includes(i)) {
+            extendedData[header] = value;
+          }
+        }
+
         normalized.push({
           product_id: productId,
           group_id: groupId,
@@ -259,7 +273,7 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
           rarity: rarityIdx >= 0 ? cols[rarityIdx] || null : null,
           product_type: productType || null,
           url_slug: slugIdx >= 0 ? cols[slugIdx] || kebab(name) : kebab(name),
-          extended_data: extendedDataIdx >= 0 ? cols[extendedDataIdx] || null : null,
+          extended_data: Object.keys(extendedData).length > 0 ? extendedData : null,
           updated_at: new Date().toISOString()
         });
       }

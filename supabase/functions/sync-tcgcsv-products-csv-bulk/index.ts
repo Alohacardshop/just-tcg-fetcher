@@ -185,26 +185,30 @@ async function fetchAndParseProducts(
       const rows = parser.parseChunk(chunk);
       
       for (const row of rows) {
-        const productIdCol = Object.keys(row).find(k => 
-          k.includes('productid') || k.includes('product_id')
+        // Normalize header names for better matching
+        const normalizedRow: any = {};
+        Object.keys(row).forEach(key => {
+          const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+          normalizedRow[normalizedKey] = row[key];
+        });
+
+        const productIdCol = Object.keys(normalizedRow).find(k => 
+          k === 'productid' || k === 'id'
         );
-        const nameCol = Object.keys(row).find(k => 
-          k.includes('productname') || k.includes('name')
+        const nameCol = Object.keys(normalizedRow).find(k => 
+          k === 'name' || k === 'cleanname' || k === 'productname'
         );
-        const numberCol = Object.keys(row).find(k => 
-          k.includes('number')
+        const numberCol = Object.keys(normalizedRow).find(k => 
+          k.includes('number') || k === 'extnumber'
         );
-        const rarityCol = Object.keys(row).find(k => 
-          k.includes('rarity')
+        const rarityCol = Object.keys(normalizedRow).find(k => 
+          k.includes('rarity') || k === 'extrarity'
         );
-        const productTypeCol = Object.keys(row).find(k => 
-          k.includes('producttype') || k.includes('product_type')
+        const productTypeCol = Object.keys(normalizedRow).find(k => 
+          k.includes('producttype') || k.includes('type') || k === 'extcardtype'
         );
-        const slugCol = Object.keys(row).find(k => 
+        const slugCol = Object.keys(normalizedRow).find(k => 
           k.includes('slug')
-        );
-        const extendedDataCol = Object.keys(row).find(k => 
-          k.includes('extendeddata') || k.includes('extended_data')
         );
         
         if (!productIdCol || !nameCol) {
@@ -212,9 +216,9 @@ async function fetchAndParseProducts(
           continue;
         }
         
-        const productId = Number(row[productIdCol]);
-        const name = row[nameCol];
-        const productType = productTypeCol ? row[productTypeCol] : null;
+        const productId = Number(normalizedRow[productIdCol]);
+        const name = normalizedRow[nameCol];
+        const productType = productTypeCol ? normalizedRow[productTypeCol] : null;
         
         if (!Number.isFinite(productId) || !name) {
           skipped++;
@@ -235,17 +239,26 @@ async function fetchAndParseProducts(
           continue;
         }
         
+        // Build extended_data object from all additional columns  
+        const extendedData: any = {};
+        Object.keys(row).forEach(key => {
+          const value = row[key];
+          if (value && key !== productIdCol && key !== nameCol && key !== numberCol && key !== rarityCol && key !== productTypeCol && key !== slugCol) {
+            extendedData[key] = value;
+          }
+        });
+
         normalized.push({
           product_id: productId,
           group_id: groupId,
           category_id: categoryId,
           name: name,
           clean_name: name.toLowerCase().trim(),
-          number: numberCol ? row[numberCol] || null : null,
-          rarity: rarityCol ? row[rarityCol] || null : null,
+          number: numberCol ? normalizedRow[numberCol] || null : null,
+          rarity: rarityCol ? normalizedRow[rarityCol] || null : null,
           product_type: productType,
-          url_slug: slugCol ? row[slugCol] || kebab(name) : kebab(name),
-          extended_data: extendedDataCol ? row[extendedDataCol] || null : null,
+          url_slug: slugCol ? normalizedRow[slugCol] || kebab(name) : kebab(name),
+          extended_data: Object.keys(extendedData).length > 0 ? extendedData : null,
           updated_at: new Date().toISOString()
         });
       }
@@ -254,18 +267,34 @@ async function fetchAndParseProducts(
     // Process any remaining data
     const finalRows = parser.finalize();
     for (const row of finalRows) {
-      const productIdCol = Object.keys(row).find(k => 
-        k.includes('productid') || k.includes('product_id')
+      // Same normalization as above
+      const normalizedRow: any = {};
+      Object.keys(row).forEach(key => {
+        const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+        normalizedRow[normalizedKey] = row[key];
+      });
+
+      const productIdCol = Object.keys(normalizedRow).find(k => 
+        k === 'productid' || k === 'id'
       );
-      const nameCol = Object.keys(row).find(k => 
-        k.includes('productname') || k.includes('name')
+      const nameCol = Object.keys(normalizedRow).find(k => 
+        k === 'name' || k === 'cleanname' || k === 'productname'
       );
       
       if (productIdCol && nameCol) {
-        const productId = Number(row[productIdCol]);
-        const name = row[nameCol];
+        const productId = Number(normalizedRow[productIdCol]);
+        const name = normalizedRow[nameCol];
         
         if (Number.isFinite(productId) && name) {
+          // Build extended_data from original row
+          const extendedData: any = {};
+          Object.keys(row).forEach(key => {
+            const value = row[key];
+            if (value && key !== productIdCol && key !== nameCol) {
+              extendedData[key] = value;
+            }
+          });
+
           normalized.push({
             product_id: productId,
             group_id: groupId,
@@ -275,6 +304,13 @@ async function fetchAndParseProducts(
             number: null,
             rarity: null,
             product_type: null,
+            url_slug: kebab(name),
+            extended_data: Object.keys(extendedData).length > 0 ? extendedData : null,
+            updated_at: new Date().toISOString()
+          });
+        }
+      }
+    }
             url_slug: kebab(name),
             extended_data: null,
             updated_at: new Date().toISOString()
