@@ -233,27 +233,8 @@ async function fetchAndParseProducts(
             continue;
           }
           
-          // Apply product type filters - only filter if productType indicates actual sealed/single distinction
-          if (!includeSealed && productType) {
-            const isActualSealedProduct = /^(sealed|pack|box|tin|bundle|collection|booster|starter|theme deck|deck|case)$/i.test(productType.trim());
-            if (isActualSealedProduct) {
-              console.log(`[${operationId}] Skipping sealed product: ${name} (type: ${productType})`);
-              skipped++;
-              continue;
-            }
-          }
-          
-          if (!includeSingles && productType) {
-            const isActualSingleCard = /^(single|card|single card)$/i.test(productType.trim());
-            if (isActualSingleCard) {
-              console.log(`[${operationId}] Skipping single card: ${name} (type: ${productType})`);
-              skipped++;
-              continue;
-            }
-          }
-          
-          // Product accepted for processing
-          console.log(`[${operationId}] Processing product: ${name} (ID: ${productId}, type: ${productType})`);}
+          // No filtering - sync all products
+          console.log(`[${operationId}] Processing product: ${name} (ID: ${productId}, type: ${productType})`);
           
           // Build extended_data object from all additional columns  
           const extendedData: any = {};
