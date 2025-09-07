@@ -21,6 +21,7 @@ export default {
 			fontFamily: {
 				'sans': ['Inter', 'system-ui', 'sans-serif'],
 				'display': ['Sora', 'system-ui', 'sans-serif'],
+				'mono': ['Space Grotesk', 'monospace'],
 			},
 			fontSize: {
 				'xs': ['0.75rem', { lineHeight: '1rem' }],
