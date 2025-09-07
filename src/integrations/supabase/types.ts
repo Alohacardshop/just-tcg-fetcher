@@ -106,6 +106,13 @@ export type Database = {
             referencedRelation: "cards"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "card_prices_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "combined_cards"
+            referencedColumns: ["card_id"]
+          },
         ]
       }
       card_product_links: {
@@ -697,10 +704,30 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      combined_cards: {
+        Row: {
+          card_id: string | null
+          card_image_url: string | null
+          card_name: string | null
+          card_number: string | null
+          game_name: string | null
+          match_confidence: number | null
+          match_method: string | null
+          match_verified: boolean | null
+          rarity: string | null
+          set_name: string | null
+          tcgcsv_image_url: string | null
+          tcgcsv_product_name: string | null
+          tcgcsv_url: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
-      [_ in never]: never
+      refresh_combined_cards: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
