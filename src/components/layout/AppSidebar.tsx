@@ -71,8 +71,8 @@ export const AppSidebar = () => {
   };
 
   return (
-    <Sidebar className="border-r border-sidebar-border">
-      <SidebarHeader className="border-b border-sidebar-border px-6 py-4">
+    <Sidebar className="border-r border-sidebar-border w-72">
+      <SidebarHeader className="border-b border-sidebar-border px-8 py-5">
         <Link to="/" className="flex items-center gap-3 group">
           <div className="w-8 h-8 rounded-lg bg-gradient-primary flex items-center justify-center shadow-glow">
             <Sparkles className="h-4 w-4 text-white" />
@@ -88,7 +88,7 @@ export const AppSidebar = () => {
         </Link>
       </SidebarHeader>
 
-      <SidebarContent className="px-4 py-4">
+      <SidebarContent className="px-6 py-6">
         <SidebarGroup>
           <SidebarGroupLabel className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wider">
             Main

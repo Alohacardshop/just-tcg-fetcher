@@ -8,13 +8,13 @@ interface AppLayoutProps {
 
 export const AppLayout = ({ children }: AppLayoutProps) => {
   return (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={true}>
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
         <div className="flex-1 flex flex-col overflow-hidden">
           <TopBar />
           <main className="flex-1 overflow-y-auto">
-            <div className="container mx-auto p-6 space-y-6 animate-fade-in">
+            <div className="container mx-auto p-8 space-y-8 animate-fade-in max-w-7xl">
               {children}
             </div>
           </main>

@@ -8,78 +8,7 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    /* Base colors - More sophisticated palette */
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-
-    --primary: 142 76% 36%;
-    --primary-foreground: 355 7% 97%;
-
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-
-    --accent: 47 96% 53%;
-    --accent-foreground: 240 5.9% 10%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 85.7% 97.3%;
-
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 142 76% 36%;
-
-    /* TCG Brand colors */
-    --brand-primary: 142 76% 36%;
-    --brand-secondary: 47 96% 53%;
-    --brand-accent: 231 94% 63%;
-    
-    /* Card rarity colors */
-    --legendary: 47 96% 53%;
-    --rare: 231 94% 63%;
-    --uncommon: 142 76% 36%;
-    --common: 240 5% 64.9%;
-    
-    /* Advanced gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(142 76% 36%) 0%, hsl(231 94% 63%) 100%);
-    --gradient-brand: linear-gradient(135deg, hsl(142 76% 36%) 0%, hsl(47 96% 53%) 50%, hsl(231 94% 63%) 100%);
-    --gradient-card: linear-gradient(145deg, hsl(240 10% 3.9%) 0%, hsl(240 8% 6%) 100%);
-    --gradient-surface: linear-gradient(145deg, hsl(240 3.7% 15.9%) 0%, hsl(240 6% 10%) 100%);
-    
-    /* Enhanced shadows */
-    --shadow-sm: 0 1px 2px 0 hsl(240 10% 3.9% / 0.05);
-    --shadow-md: 0 4px 6px -1px hsl(240 10% 3.9% / 0.1), 0 2px 4px -1px hsl(240 10% 3.9% / 0.06);
-    --shadow-lg: 0 10px 15px -3px hsl(240 10% 3.9% / 0.1), 0 4px 6px -2px hsl(240 10% 3.9% / 0.05);
-    --shadow-glow: 0 0 30px hsl(142 76% 36% / 0.15);
-    --shadow-card: 0 8px 32px hsl(240 10% 3.9% / 0.12);
-    
-    /* Animations */
-    --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-slow: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-
-    --radius: 0.75rem;
-
-    /* Sidebar */
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 142 76% 36%;
-    --sidebar-primary-foreground: 355 7% 97%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 142 76% 36%;
-  }
-
-  .light {
+    /* Base colors - Light mode optimized */
     --background: 0 0% 100%;
     --foreground: 240 10% 3.9%;
 
@@ -108,13 +37,84 @@ All colors MUST be HSL.
     --input: 240 5.9% 90%;
     --ring: 142 76% 36%;
 
-    --sidebar-background: 0 0% 98%;
+    /* TCG Brand colors */
+    --brand-primary: 142 76% 36%;
+    --brand-secondary: 47 96% 53%;
+    --brand-accent: 231 94% 63%;
+    
+    /* Card rarity colors */
+    --legendary: 47 96% 53%;
+    --rare: 231 94% 63%;
+    --uncommon: 142 76% 36%;
+    --common: 240 3.8% 46.1%;
+    
+    /* Advanced gradients - Light mode */
+    --gradient-primary: linear-gradient(135deg, hsl(142 76% 36%) 0%, hsl(231 94% 63%) 100%);
+    --gradient-brand: linear-gradient(135deg, hsl(142 76% 36%) 0%, hsl(47 96% 53%) 50%, hsl(231 94% 63%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(0 0% 100%) 0%, hsl(240 5% 98%) 100%);
+    --gradient-surface: linear-gradient(145deg, hsl(240 4.8% 95.9%) 0%, hsl(240 5% 94%) 100%);
+    
+    /* Enhanced shadows - Light mode */
+    --shadow-sm: 0 1px 2px 0 hsl(240 5.9% 10% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(240 5.9% 10% / 0.1), 0 2px 4px -1px hsl(240 5.9% 10% / 0.06);
+    --shadow-lg: 0 10px 15px -3px hsl(240 5.9% 10% / 0.1), 0 4px 6px -2px hsl(240 5.9% 10% / 0.05);
+    --shadow-glow: 0 0 30px hsl(142 76% 36% / 0.15);
+    --shadow-card: 0 8px 32px hsl(240 5.9% 10% / 0.08);
+    
+    /* Animations */
+    --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --radius: 0.75rem;
+
+    /* Sidebar - Light mode */
+    --sidebar-background: 250 50% 98%;
     --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-primary: 142 76% 36%;
+    --sidebar-primary-foreground: 355 7% 97%;
     --sidebar-accent: 240 4.8% 95.9%;
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 142 76% 36%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 142 76% 36%;
+    --primary-foreground: 355 7% 97%;
+
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 47 96% 53%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 85.7% 97.3%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 142 76% 36%;
+
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 142 76% 36%;
+    --sidebar-primary-foreground: 355 7% 97%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 142 76% 36%;
   }
 }
