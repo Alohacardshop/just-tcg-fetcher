@@ -64,12 +64,29 @@ function normalizeCardName(name: string): string {
 async function syncImagesForGame(
   supabaseClient: any, 
   gameSlug: string, 
-  categoryId: string,
   operationId: string,
   dryRun = false,
   forceUpdate = false
 ) {
-  console.log(`Starting image sync for game: ${gameSlug}, category: ${categoryId}`)
+  console.log(`Starting image sync for game: ${gameSlug}`)
+  
+  // Get game with tcgcsv category ID
+  const { data: gameData, error: gameError } = await supabaseClient
+    .from('games')
+    .select('id, tcgcsv_category_id')
+    .eq('slug', gameSlug)
+    .single()
+
+  if (gameError || !gameData) {
+    throw new Error(`Game not found: ${gameSlug}`)
+  }
+
+  if (!gameData.tcgcsv_category_id) {
+    throw new Error(`Game ${gameSlug} does not have tcgcsv_category_id configured`)
+  }
+
+  const categoryId = gameData.tcgcsv_category_id
+  console.log(`Using tcgcsv category ID: ${categoryId}`)
   
   // Get all sets for this game that don't have images (or all if force update)
   const setsQuery = supabaseClient
@@ -78,6 +95,7 @@ async function syncImagesForGame(
       id,
       name,
       jt_set_id,
+      tcgcsv_group_id,
       cards!inner(
         id,
         name,
@@ -86,7 +104,7 @@ async function syncImagesForGame(
         image_url
       )
     `)
-    .eq('cards.game_id', (await supabaseClient.from('games').select('id').eq('slug', gameSlug).single()).data?.id)
+    .eq('cards.game_id', gameData.id)
 
   if (!forceUpdate) {
     setsQuery.is('cards.image_url', null)
@@ -236,7 +254,6 @@ Deno.serve(async (req) => {
 
     const { 
       gameSlug = 'pokemon', 
-      categoryId = '3', 
       dryRun = false, 
       forceUpdate = false,
       background = true 
@@ -260,7 +277,6 @@ Deno.serve(async (req) => {
         const result = await syncImagesForGame(
           supabaseClient, 
           gameSlug, 
-          categoryId, 
           operationId,
           dryRun,
           forceUpdate
@@ -277,7 +293,6 @@ Deno.serve(async (req) => {
           details: { 
             ...result, 
             gameSlug, 
-            categoryId, 
             dryRun, 
             forceUpdate 
           },
@@ -294,7 +309,7 @@ Deno.serve(async (req) => {
           operation_id: operationId,
           status: 'error',
           message: `Image sync failed for ${gameSlug}: ${error.message}`,
-          details: { error: error.message, gameSlug, categoryId }
+          details: { error: error.message, gameSlug }
         })
         
         throw error

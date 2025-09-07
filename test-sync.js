@@ -7,9 +7,9 @@ const response = await fetch('https://ljywcyhnpzqgpowwrpre.supabase.co/functions
   },
   body: JSON.stringify({
     gameSlug: 'pokemon',
-    categoryId: '3',
     background: false,
-    forceUpdate: true
+    forceUpdate: true,
+    dryRun: false
   })
 });
 
