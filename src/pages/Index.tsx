@@ -6,6 +6,7 @@ import { GameCard } from '@/components/GameCard';
 import { SetCard } from '@/components/SetCard';
 import { CardGrid } from '@/components/CardGrid';
 import { TcgCsvSync } from '@/components/TcgCsvSync';
+import { TcgCsvSyncV2 } from '@/components/TcgCsvSyncV2';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -311,6 +312,7 @@ const Index = () => {
             </TabsContent>
 
             <TabsContent value="tcgcsv" className="space-y-6">
+              <TcgCsvSyncV2 />
               <TcgCsvSync />
             </TabsContent>
 

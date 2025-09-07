@@ -108,6 +108,39 @@ export type Database = {
           },
         ]
       }
+      card_product_links: {
+        Row: {
+          card_id: string
+          created_at: string
+          id: string
+          match_confidence: number | null
+          match_method: string | null
+          tcgcsv_product_id: string
+          updated_at: string
+          verified: boolean | null
+        }
+        Insert: {
+          card_id: string
+          created_at?: string
+          id?: string
+          match_confidence?: number | null
+          match_method?: string | null
+          tcgcsv_product_id: string
+          updated_at?: string
+          verified?: boolean | null
+        }
+        Update: {
+          card_id?: string
+          created_at?: string
+          id?: string
+          match_confidence?: number | null
+          match_method?: string | null
+          tcgcsv_product_id?: string
+          updated_at?: string
+          verified?: boolean | null
+        }
+        Relationships: []
+      }
       cards: {
         Row: {
           created_at: string
@@ -548,6 +581,36 @@ export type Database = {
         }
         Relationships: []
       }
+      tcgcsv_categories: {
+        Row: {
+          category_id: string
+          created_at: string
+          data: Json | null
+          id: string
+          name: string
+          slug: string | null
+          updated_at: string
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          data?: Json | null
+          id?: string
+          name: string
+          slug?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          data?: Json | null
+          id?: string
+          name?: string
+          slug?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tcgcsv_groups: {
         Row: {
           category_id: string
@@ -558,6 +621,7 @@ export type Database = {
           name: string
           release_date: string | null
           slug: string | null
+          tcgcsv_category_id: string | null
           updated_at: string
         }
         Insert: {
@@ -569,6 +633,7 @@ export type Database = {
           name: string
           release_date?: string | null
           slug?: string | null
+          tcgcsv_category_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -580,6 +645,7 @@ export type Database = {
           name?: string
           release_date?: string | null
           slug?: string | null
+          tcgcsv_category_id?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -595,6 +661,7 @@ export type Database = {
           name: string
           number: string | null
           product_id: string
+          tcgcsv_group_id: string | null
           updated_at: string
           url: string | null
         }
@@ -608,6 +675,7 @@ export type Database = {
           name: string
           number?: string | null
           product_id: string
+          tcgcsv_group_id?: string | null
           updated_at?: string
           url?: string | null
         }
@@ -621,6 +689,7 @@ export type Database = {
           name?: string
           number?: string | null
           product_id?: string
+          tcgcsv_group_id?: string | null
           updated_at?: string
           url?: string | null
         }
