@@ -42,3 +42,12 @@ verify_jwt = false
 
 [functions.sync-tcgcsv-categories]
 verify_jwt = false
+
+[functions.sync-tcgcsv-categories-csv-fast]
+verify_jwt = false
+
+[functions.sync-tcgcsv-groups-csv-fast]
+verify_jwt = false
+
+[functions.sync-tcgcsv-products-csv-bulk]
+verify_jwt = false
