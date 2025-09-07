@@ -282,7 +282,6 @@ serve(async (req) => {
   
   // Use service role for DB writes to bypass RLS
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-  });
 
   try {
     console.log(`[${operationId}] Starting TCGCSV categories fast CSV sync`);
