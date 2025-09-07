@@ -231,18 +231,21 @@ async function fetchAndParseProducts(
             continue;
           }
           
-          // Apply product type filters
-          if (!includeSealed && productType && 
-              productType.toLowerCase().includes('sealed')) {
-            skipped++;
-            continue;
+          // Apply product type filters - only filter if productType indicates actual sealed/single distinction
+          if (!includeSealed && productType) {
+            const isActualSealedProduct = /^(sealed|pack|box|tin|bundle|collection|booster|starter|theme deck|deck|case)$/i.test(productType.trim());
+            if (isActualSealedProduct) {
+              skipped++;
+              continue;
+            }
           }
           
-          if (!includeSingles && productType && 
-              (productType.toLowerCase().includes('card') || 
-               productType.toLowerCase().includes('single'))) {
-            skipped++;
-            continue;
+          if (!includeSingles && productType) {
+            const isActualSingleCard = /^(single|card|single card)$/i.test(productType.trim());
+            if (isActualSingleCard) {
+              skipped++;
+              continue;
+            }
           }
           
           // Build extended_data object from all additional columns  
