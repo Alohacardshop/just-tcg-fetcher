@@ -58,14 +58,16 @@ interface MatchResult {
 export const TcgCsvSyncV2 = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  // State management
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedGame, setSelectedGame] = useState<string>('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [dryRun, setDryRun] = useState(true);
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [currentOperationId, setCurrentOperationId] = useState<string>('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
 
   // Get sync logs for current operation
   const { data: syncLogs } = useSyncLogs(currentOperationId);
