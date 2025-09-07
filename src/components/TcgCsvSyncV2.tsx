@@ -249,6 +249,42 @@ export const TcgCsvSyncV2 = () => {
     },
   });
 
+  // Clear all TCGCSV data mutation
+  const clearDataMutation = useMutation({
+    mutationFn: async () => {
+      // Clear tables in correct order (due to dependencies)
+      await supabase.from('card_product_links').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      await supabase.from('tcgcsv_products').delete().neq('product_id', '');
+      await supabase.from('tcgcsv_groups').delete().neq('group_id', '');
+      await supabase.from('tcgcsv_categories').delete().neq('category_id', '');
+      
+      return { success: true, message: 'All TCGCSV data cleared successfully' };
+    },
+    onSuccess: (data) => {
+      // Refresh all queries
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-list'] });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-groups'] });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-stats'] });
+      
+      // Reset local state
+      setSelectedCategories([]);
+      setSelectedCategoryId('');
+      
+      toast({
+        title: "Data Cleared",
+        description: data.message,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Clear Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Filter categories based on search
   const filteredCategories = categories?.filter(cat => 
     cat.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -304,6 +340,16 @@ export const TcgCsvSyncV2 = () => {
             >
               <Download className="h-4 w-4" />
               Fetch All Data
+            </Button>
+
+            <Button 
+              onClick={() => clearDataMutation.mutate()}
+              disabled={clearDataMutation.isPending}
+              variant="destructive"
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${clearDataMutation.isPending ? 'animate-spin' : ''}`} />
+              Clear All TCGCSV Data
             </Button>
           </div>
 
