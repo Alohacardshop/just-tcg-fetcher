@@ -41,123 +41,175 @@ function generateSlug(name: string, index: number): string {
 }
 
 async function fetchAndNormalizeCategories(operationId: string, supabase: any) {
-  try {
-    await logToSyncLogs(supabase, operationId, 'info', 'Fetching TCGCSV categories from endpoint');
+  let attempt = 0;
+  const maxAttempts = 3;
+  
+  while (attempt < maxAttempts) {
+    try {
+      attempt++;
+      await logToSyncLogs(supabase, operationId, 'info', `Fetching TCGCSV categories from endpoint (attempt ${attempt})`);
 
-    // Fetch with timeout
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+      // Fetch with timeout and proper headers
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(CATEGORIES_URL, { 
-      method: 'GET',
-      signal: controller.signal 
-    });
-    clearTimeout(timeout);
+      const response = await fetch(CATEGORIES_URL, { 
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Cache-Control': 'no-cache',
+          'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)'
+        },
+        signal: controller.signal 
+      });
+      clearTimeout(timeout);
 
-    // Log HTTP status
-    console.log("TCGCSV HTTP status", response.status);
-    await logToSyncLogs(supabase, operationId, 'info', `TCGCSV HTTP status: ${response.status}`);
+      // Log HTTP status and headers
+      console.log("TCGCSV HTTP status", response.status);
+      const contentType = response.headers.get('content-type') || '';
+      const contentLength = response.headers.get('content-length') || '';
+      await logToSyncLogs(supabase, operationId, 'info', `TCGCSV HTTP status: ${response.status}, content-type: ${contentType}`);
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      const errorMsg = `TCGCSV HTTP ${response.status}: ${errorText.slice(0, 400)}`;
-      throw new Error(errorMsg);
-    }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        const errorMsg = `TCGCSV HTTP ${response.status}: ${errorText.slice(0, 400)}`;
+        throw new Error(errorMsg);
+      }
 
-    // Parse JSON safely
-    const raw = await response.json().catch(() => {
-      console.warn("Failed to parse JSON response, defaulting to empty object");
-      return {};
-    });
-
-    // Log payload shape diagnostics
-    const diagnostics = {
-      isArray: Array.isArray(raw),
-      hasCategories: Array.isArray(raw?.categories),
-      hasData: Array.isArray(raw?.data),
-      categoriesCount: Array.isArray(raw?.categories) ? raw.categories.length : 0,
-      dataCount: Array.isArray(raw?.data) ? raw.data.length : 0,
-      rawCount: Array.isArray(raw) ? raw.length : 0
-    };
-
-    console.log("Payload shape diagnostics", diagnostics);
-    await logToSyncLogs(supabase, operationId, 'info', 'Payload shape analysis', diagnostics);
-
-    // Normalize Categories - Accept valid arrays from different shapes
-    let categories: any[] = [];
-    
-    if (Array.isArray(raw)) {
-      categories = raw;
-    } else if (Array.isArray(raw?.categories)) {
-      categories = raw.categories;
-    } else if (Array.isArray(raw?.data)) {
-      categories = raw.data;
-    } else {
-      console.warn("No valid categories array found in response, defaulting to empty array");
-      categories = [];
-    }
-
-    // Log first 2 category samples for debugging
-    if (categories.length > 0) {
-      const samples = categories.slice(0, 2);
-      console.log("First 2 category samples", samples);
-      await logToSyncLogs(supabase, operationId, 'info', 'Category samples', { samples, totalCount: categories.length });
-    }
-
-    // Safe Mapping - Never call .map() unless Array.isArray is true
-    const normalized: any[] = [];
-    
-    if (Array.isArray(categories)) {
-      for (let i = 0; i < categories.length; i++) {
-        const cat = categories[i];
+      // Try to parse JSON
+      let raw: any;
+      try {
+        raw = await response.json();
+      } catch (jsonError) {
+        // If JSON parsing fails, read as text and check if we should retry
+        const text = await response.text().catch(() => "");
         
-        const normalizedCategory = {
-          id: cat?.categoryId || cat?.id || i,
-          name: cat?.name || cat?.title || "Unknown",
-          slug: cat?.slug || generateSlug(cat?.name || cat?.title, i),
-          tcgcsv_category_id: cat?.categoryId || cat?.id || i,
-          display_name: cat?.displayName || cat?.display_name || cat?.name || cat?.title || "Unknown",
-          modified_on: cat?.modifiedOn ? new Date(cat.modifiedOn).toISOString() : null,
-          category_group_id: cat?.categoryGroupId || cat?.category_group_id || null,
-          raw: cat
+        if (attempt < maxAttempts) {
+          console.warn(`JSON parse failed on attempt ${attempt}, retrying...`);
+          const backoff = [250, 750, 1500][attempt - 1] + Math.random() * 100;
+          await new Promise(resolve => setTimeout(resolve, backoff));
+          continue;
+        }
+        
+        // Final attempt failed - return diagnostic info
+        const hint = {
+          code: text.trim().startsWith('<') ? 'HTML_BODY' : 
+                text.trim() === '' ? 'EMPTY_BODY' :
+                text.includes(',') && !text.includes('{') && !text.includes('[') ? 'CSV_BODY' : 
+                'UNKNOWN_NON_JSON',
+          sample: text.slice(0, 300),
+          headers: { 'content-type': contentType, 'content-length': contentLength }
         };
         
-        normalized.push(normalizedCategory);
+        await logToSyncLogs(supabase, operationId, 'error', 'Non-JSON response after retries', hint);
+        return { success: false, categories: [], categoriesCount: 0, error: 'NON_JSON_BODY', hint };
       }
+
+      // Parse categories from TCGplayer-style envelope
+      let categories: any[] = [];
+      let parseSource = '';
+      
+      if (Array.isArray(raw?.results)) {
+        categories = raw.results;
+        parseSource = 'results';
+      } else if (Array.isArray(raw)) {
+        categories = raw;
+        parseSource = 'bare_array';
+      } else if (Array.isArray(raw?.categories)) {
+        categories = raw.categories;
+        parseSource = 'categories';
+      } else if (Array.isArray(raw?.data)) {
+        categories = raw.data;
+        parseSource = 'data';
+      }
+
+      // Log parsing diagnostics
+      const diagnostics = {
+        parseSource,
+        hasResults: Array.isArray(raw?.results),
+        resultsCount: Array.isArray(raw?.results) ? raw.results.length : 0,
+        isArray: Array.isArray(raw),
+        hasCategories: Array.isArray(raw?.categories),
+        hasData: Array.isArray(raw?.data),
+        finalCategoriesCount: categories.length
+      };
+
+      console.log("Payload parsing diagnostics", diagnostics);
+      await logToSyncLogs(supabase, operationId, 'info', `Parsed categories from ${parseSource}`, diagnostics);
+
+      // Log first 2 category samples for debugging
+      if (categories.length > 0) {
+        const samples = categories.slice(0, 2);
+        console.log("First 2 category samples", samples);
+        await logToSyncLogs(supabase, operationId, 'info', 'Category samples', { samples, totalCount: categories.length });
+      }
+
+      // Normalize categories - only if we have an array
+      const normalized: any[] = [];
+      let skipped = 0;
+      
+      if (Array.isArray(categories)) {
+        for (let i = 0; i < categories.length; i++) {
+          const cat = categories[i];
+          
+          // Skip items missing required fields
+          if (!cat?.categoryId && !cat?.id) {
+            skipped++;
+            continue;
+          }
+          if (!cat?.name && !cat?.title) {
+            skipped++;
+            continue;
+          }
+          
+          const normalizedCategory = {
+            tcgcsv_category_id: cat.categoryId || cat.id,
+            name: cat.name || cat.title,
+            display_name: cat.displayName || null,
+            modified_on: cat.modifiedOn ? new Date(cat.modifiedOn).toISOString() : null,
+            category_group_id: cat.categoryGroupId || null
+          };
+          
+          normalized.push(normalizedCategory);
+        }
+      }
+
+      await logToSyncLogs(supabase, operationId, 'info', `Normalized ${normalized.length} categories, skipped ${skipped}`);
+
+      return { success: true, categories: normalized, categoriesCount: normalized.length, skipped };
+
+    } catch (error: any) {
+      if (attempt < maxAttempts) {
+        console.warn(`Attempt ${attempt} failed, retrying:`, error.message);
+        const backoff = [250, 750, 1500][attempt - 1] + Math.random() * 100;
+        await new Promise(resolve => setTimeout(resolve, backoff));
+        continue;
+      }
+      
+      await logToSyncLogs(supabase, operationId, 'error', 'Failed to fetch TCGCSV categories after all retries', { error: error.message });
+      throw error;
     }
-
-    await logToSyncLogs(supabase, operationId, 'info', `Normalized ${normalized.length} categories`);
-
-    return normalized;
-
-  } catch (error: any) {
-    await logToSyncLogs(supabase, operationId, 'error', 'Failed to fetch TCGCSV categories', { error: error.message });
-    throw error;
   }
+  
+  throw new Error('Max attempts exceeded');
 }
 
-async function syncCategoriesToDB(categories: any[], operationId: string, supabase: any) {
-  // DB Sync Guard - Skip if no categories
-  if (!Array.isArray(categories) || categories.length === 0) {
+async function syncCategoriesToDB(result: any, operationId: string, supabase: any) {
+  // DB Sync Guard - Skip if no categories or failed fetch
+  if (!result.success || !Array.isArray(result.categories) || result.categories.length === 0) {
     const warningMsg = "No categories fetched. Skipping DB sync.";
     console.warn(warningMsg);
     await logToSyncLogs(supabase, operationId, 'warning', warningMsg);
-    return null;
+    return result;
   }
 
   try {
-    await logToSyncLogs(supabase, operationId, 'info', `Starting DB sync for ${categories.length} categories`);
+    await logToSyncLogs(supabase, operationId, 'info', `Starting DB sync for ${result.categories.length} categories`);
 
     const { data, error } = await supabase
       .from('tcgcsv_categories')
       .upsert(
-        categories.map(cat => ({
-          tcgcsv_category_id: cat.tcgcsv_category_id,
-          name: cat.name,
-          display_name: cat.display_name,
-          modified_on: cat.modified_on,
-          category_group_id: cat.category_group_id
-        })),
+        result.categories,
         { 
           onConflict: 'tcgcsv_category_id',
           ignoreDuplicates: false 
@@ -168,8 +220,8 @@ async function syncCategoriesToDB(categories: any[], operationId: string, supaba
       throw new Error(`DB upsert failed: ${error.message}`);
     }
 
-    await logToSyncLogs(supabase, operationId, 'success', `Successfully synced ${categories.length} categories to database`);
-    return data;
+    await logToSyncLogs(supabase, operationId, 'success', `Successfully synced ${result.categories.length} categories to database`);
+    return { ...result, dbData: data };
 
   } catch (error: any) {
     await logToSyncLogs(supabase, operationId, 'error', 'DB sync failed', { error: error.message });
@@ -192,18 +244,32 @@ serve(async (req) => {
     await logToSyncLogs(supabase, operationId, 'info', 'Starting TCGCSV categories sync operation');
 
     // Fetch and normalize categories
-    const categories = await fetchAndNormalizeCategories(operationId, supabase);
+    const result = await fetchAndNormalizeCategories(operationId, supabase);
+    
+    // If fetch failed, return the error response
+    if (!result.success) {
+      await logToSyncLogs(supabase, operationId, 'error', 'TCGCSV categories fetch failed', result);
+      return json({
+        success: false,
+        categories: [],
+        categoriesCount: 0,
+        error: result.error,
+        hint: result.hint,
+        operationId
+      }, { status: 500 });
+    }
     
     // Sync to database
-    await syncCategoriesToDB(categories, operationId, supabase);
+    const finalResult = await syncCategoriesToDB(result, operationId, supabase);
 
     await logToSyncLogs(supabase, operationId, 'success', 'TCGCSV categories sync completed successfully');
 
     // Response Shape - Success
     return json({
       success: true,
-      categories,
-      categoriesCount: categories.length,
+      categories: finalResult.categories,
+      categoriesCount: finalResult.categoriesCount,
+      skipped: finalResult.skipped,
       operationId
     });
 
