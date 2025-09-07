@@ -8,108 +8,114 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
-    --foreground: 240 25% 8%;
+    /* Base colors - More sophisticated palette */
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 240 25% 8%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 25% 8%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
 
-    --primary: 258 89% 66%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 142 76% 36%;
+    --primary-foreground: 355 7% 97%;
 
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 240 25% 8%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
 
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
 
-    --accent: 45 93% 58%;
-    --accent-foreground: 240 25% 8%;
+    --accent: 47 96% 53%;
+    --accent-foreground: 240 5.9% 10%;
 
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 85.7% 97.3%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 258 89% 66%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 142 76% 36%;
 
-    /* Custom TCG theme colors */
-    --legendary: 45 93% 58%;
-    --rare: 258 89% 66%;
-    --uncommon: 200 89% 66%;
-    --common: 215 16% 47%;
+    /* TCG Brand colors */
+    --brand-primary: 142 76% 36%;
+    --brand-secondary: 47 96% 53%;
+    --brand-accent: 231 94% 63%;
     
-    /* Gradients */
-    --gradient-primary: linear-gradient(135deg, hsl(258 89% 66%), hsl(280 89% 66%));
-    --gradient-legendary: linear-gradient(135deg, hsl(45 93% 58%), hsl(35 93% 68%));
-    --gradient-card: linear-gradient(135deg, hsl(0 0% 100%), hsl(210 40% 98%));
-    --gradient-subtle: linear-gradient(180deg, hsl(210 40% 98%), hsl(200 40% 96%));
+    /* Card rarity colors */
+    --legendary: 47 96% 53%;
+    --rare: 231 94% 63%;
+    --uncommon: 142 76% 36%;
+    --common: 240 5% 64.9%;
     
-    /* Shadows */
-    --shadow-glow: 0 0 40px hsl(258 89% 66% / 0.2);
-    --shadow-card: 0 4px 16px hsl(240 25% 8% / 0.1);
+    /* Advanced gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(142 76% 36%) 0%, hsl(231 94% 63%) 100%);
+    --gradient-brand: linear-gradient(135deg, hsl(142 76% 36%) 0%, hsl(47 96% 53%) 50%, hsl(231 94% 63%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(240 10% 3.9%) 0%, hsl(240 8% 6%) 100%);
+    --gradient-surface: linear-gradient(145deg, hsl(240 3.7% 15.9%) 0%, hsl(240 6% 10%) 100%);
     
-    /* Animation */
+    /* Enhanced shadows */
+    --shadow-sm: 0 1px 2px 0 hsl(240 10% 3.9% / 0.05);
+    --shadow-md: 0 4px 6px -1px hsl(240 10% 3.9% / 0.1), 0 2px 4px -1px hsl(240 10% 3.9% / 0.06);
+    --shadow-lg: 0 10px 15px -3px hsl(240 10% 3.9% / 0.1), 0 4px 6px -2px hsl(240 10% 3.9% / 0.05);
+    --shadow-glow: 0 0 30px hsl(142 76% 36% / 0.15);
+    --shadow-card: 0 8px 32px hsl(240 10% 3.9% / 0.12);
+    
+    /* Animations */
+    --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;
 
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-
-  .light {
-    --background: 210 40% 98%;
-    --foreground: 240 25% 8%;
-
-    --card: 0 0% 100%;
-    --card-foreground: 240 25% 8%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 25% 8%;
-
-    --primary: 258 89% 66%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 240 25% 8%;
-
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-
-    --accent: 45 93% 58%;
-    --accent-foreground: 240 25% 8%;
-
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 258 89% 66%;
+    /* Sidebar */
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-primary: 142 76% 36%;
+    --sidebar-primary-foreground: 355 7% 97%;
     --sidebar-accent: 240 3.7% 15.9%;
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-ring: 142 76% 36%;
+  }
+
+  .light {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 142 76% 36%;
+    --primary-foreground: 355 7% 97%;
+
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+
+    --accent: 47 96% 53%;
+    --accent-foreground: 240 5.9% 10%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 142 76% 36%;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 142 76% 36%;
   }
 }
 
@@ -119,6 +125,61 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
   }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-background;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground;
+  }
+
+  /* Enhanced focus styles */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-background;
+  }
+
+  /* Smooth animations */
+  .animate-in {
+    animation: enter 0.25s ease-out;
+  }
+
+  .animate-out {
+    animation: exit 0.25s ease-in;
+  }
+
+  @keyframes enter {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes exit {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(10px) scale(0.95);
+    }
+  }
+}
 }

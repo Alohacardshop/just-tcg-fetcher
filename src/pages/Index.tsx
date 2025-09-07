@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Header } from '@/components/Header';
+import { AppLayout } from '@/components/layout/AppLayout';
 import { SearchFilters } from '@/components/SearchFilters';
 import { DataImportPanel } from '@/components/DataImportPanel';
 import { GameCard } from '@/components/GameCard';
@@ -205,10 +205,8 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-subtle">
-      <Header />
-      
-      <main className="container mx-auto px-6 py-8">
+    <AppLayout>
+      <div className="space-y-6">
         {renderBreadcrumb()}
         
         {currentView === 'dashboard' && (
@@ -388,8 +386,8 @@ const Index = () => {
             )}
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 };
 
