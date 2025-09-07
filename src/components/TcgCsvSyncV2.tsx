@@ -565,20 +565,52 @@ export const TcgCsvSyncV2 = () => {
                   </CardHeader>
                   <CardContent>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto">
-                      {groups.map((group) => (
-                        <div 
-                          key={group.group_id} 
-                          className="p-3 border rounded-lg bg-muted/30"
-                        >
-                          <div className="font-medium text-sm">{group.name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            ID: {group.group_id}
-                            {group.release_date && (
-                              <span className="block">Released: {group.release_date}</span>
-                            )}
+                      {groups.map((group) => {
+                        const categoryId = selectedCategories[0]; // Since we know there's at least one
+                        return (
+                          <div 
+                            key={group.group_id} 
+                            className="p-3 border rounded-lg bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
+                            onClick={async () => {
+                              try {
+                                const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
+                                  body: { 
+                                    fetchType: 'products', 
+                                    categoryId: categoryId, 
+                                    groupId: group.group_id 
+                                  }
+                                });
+                                if (error) throw error;
+                                toast({
+                                  title: "Products Fetched",
+                                  description: `Successfully fetched products for ${group.name}`,
+                                });
+                                // Refresh categories to update product counts
+                                queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
+                              } catch (error: any) {
+                                toast({
+                                  title: "Fetch Failed",
+                                  description: error.message,
+                                  variant: "destructive",
+                                });
+                              }
+                            }}
+                          >
+                            <div className="font-medium text-sm">{group.name}</div>
+                            <div className="text-xs text-muted-foreground">
+                              ID: {group.group_id}
+                              {group.release_date && (
+                                <span className="block">Released: {group.release_date}</span>
+                              )}
+                            </div>
+                            <div className="mt-2">
+                              <Button size="sm" variant="outline" className="w-full text-xs">
+                                Fetch Products
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </CardContent>
                 </Card>
