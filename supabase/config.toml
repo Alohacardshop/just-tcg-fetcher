@@ -39,3 +39,6 @@ verify_jwt = false
 
 [functions.unified-card-sync]
 verify_jwt = false
+
+[functions.sync-tcgcsv-categories]
+verify_jwt = false

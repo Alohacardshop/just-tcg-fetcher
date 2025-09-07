@@ -15,6 +15,7 @@ interface TcgCsvCategory {
 
 async function logToSyncLogs(supabase: any, operationId: string, status: string, message: string, details?: any) {
   try {
+    console.log(`[${operationId}] ${status}: ${message}`, details);
     await supabase.from('sync_logs').insert({
       operation_id: operationId,
       operation_type: 'tcgcsv_categories_sync',
