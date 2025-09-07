@@ -28,37 +28,37 @@ export const TcgCsvSyncV2 = () => {
   const syncCategories = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('sync-tcgcsv-categories', {
-        body: { background: false }
+      const { data, error } = await supabase.functions.invoke('sync-tcgcsv-categories', { 
+        body: {} 
       });
 
-      if (error) throw error;
+      if (error) {
+        toast({ 
+          title: "TCGCSV sync failed", 
+          description: error.message, 
+          variant: "destructive" 
+        });
+        return;
+      }
 
-      // Defensive count calculation
-      const count = Array.isArray(data?.categories) ? data.categories.length
-        : Number.isFinite(data?.categoriesCount) ? data.categoriesCount : 0;
-      
-      const skipped = data?.skipped || 0;
-      
+      // Guard the client - compute count safely
+      const arr = Array.isArray(data?.categories) ? data.categories : [];
+      const count = Number.isFinite(data?.categoriesCount) ? data.categoriesCount : arr.length;
+
       if (count === 0) {
         toast({
-          title: "No Categories Found",
-          description: "No valid categories were returned from TCGCSV. Check the logs for details.",
+          title: "No categories",
+          description: data?.error || data?.note || "Upstream returned no categories. Check the endpoint response.",
           variant: "destructive",
         });
       } else {
-        let message = `Synced ${count} categories successfully`;
-        if (skipped > 0) {
-          message += ` (${skipped} invalid categories skipped)`;
-        }
-        
-        toast({
-          title: "Success",
-          description: message,
+        toast({ 
+          title: "Synced categories", 
+          description: `Processed ${count} categories successfully.` 
         });
+        setLastSync(new Date().toLocaleString());
       }
       
-      setLastSync(new Date().toLocaleString());
     } catch (error: any) {
       console.error('Sync error:', error);
       toast({
