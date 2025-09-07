@@ -39,159 +39,243 @@ function generateSlug(name: string): string {
 }
 
 async function fetchAndNormalizeGroups(categoryId: number, operationId: string, supabase: any) {
-  let attempt = 0;
-  const maxAttempts = 3;
-  
-  while (attempt < maxAttempts) {
-    try {
-      attempt++;
-      const groupsUrl = `https://tcgcsv.com/tcgplayer/groups?categoryId=${categoryId}`;
-      await logToSyncLogs(supabase, operationId, 'info', `Fetching groups for category ${categoryId} (attempt ${attempt})`);
+  const urls = [
+    `https://tcgcsv.com/tcgplayer/${categoryId}/groups`, // Primary: path-style
+    `https://tcgcsv.com/tcgplayer/groups?categoryId=${categoryId}` // Fallback: query-style
+  ];
 
-      // Fetch with timeout and proper headers
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-
-      const response = await fetch(groupsUrl, { 
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Cache-Control': 'no-cache',
-          'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)'
-        },
-        signal: controller.signal 
-      });
-      clearTimeout(timeout);
-
-      console.log("TCGCSV groups HTTP status", response.status);
-      const contentType = response.headers.get('content-type') || '';
-      await logToSyncLogs(supabase, operationId, 'info', `TCGCSV HTTP status: ${response.status}, content-type: ${contentType}`);
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        const errorMsg = `TCGCSV HTTP ${response.status}: ${errorText.slice(0, 400)}`;
-        throw new Error(errorMsg);
-      }
-
-      // Try to parse JSON
-      let json: any;
+  for (const url of urls) {
+    let attempt = 0;
+    const maxAttempts = 3;
+    
+    while (attempt < maxAttempts) {
       try {
-        json = await response.json();
-      } catch (jsonError) {
-        const text = await response.text().catch(() => "");
+        attempt++;
+        await logToSyncLogs(supabase, operationId, 'info', `Fetching groups from ${url} (attempt ${attempt})`);
+
+        // Fetch with timeout and proper headers
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+
+        const response = await fetch(url, { 
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache',
+            'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)'
+          },
+          signal: controller.signal 
+        });
+        clearTimeout(timeout);
+
+        // Extract response metadata
+        const status = response.status;
+        const contentType = response.headers.get('content-type') || '';
+        const contentLength = response.headers.get('content-length') || '';
+        const cfCacheStatus = response.headers.get('cf-cache-status') || '';
+        const age = response.headers.get('age') || '';
+
+        console.log("TCGCSV groups HTTP response", { url, status, contentType, contentLength, cfCacheStatus, age });
+        await logToSyncLogs(supabase, operationId, 'info', `HTTP response: ${status}`, { 
+          url, status, contentType, contentLength, cfCacheStatus, age 
+        });
+
+        if (!response.ok) {
+          if (attempt < maxAttempts) {
+            const backoff = [250, 750, 1500][attempt - 1] + Math.random() * 100;
+            await new Promise(resolve => setTimeout(resolve, backoff));
+            continue;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        // Try to parse JSON
+        let json: any;
+        let parsedAs = 'unknown';
         
+        try {
+          json = await response.json();
+          parsedAs = 'json';
+        } catch (jsonError) {
+          // If JSON parsing fails, read as text and classify
+          const text = await response.text().catch(() => "");
+          
+          if (text.trim().startsWith('<')) {
+            parsedAs = 'html';
+          } else if (text.trim() === '') {
+            parsedAs = 'empty';
+          } else if (text.includes(',') && !text.includes('{') && !text.includes('[')) {
+            parsedAs = 'csv';
+          } else {
+            parsedAs = 'unknown';
+          }
+          
+          if (attempt < maxAttempts) {
+            console.warn(`JSON parse failed (${parsedAs}) on attempt ${attempt}, retrying...`);
+            const backoff = [250, 750, 1500][attempt - 1] + Math.random() * 100;
+            await new Promise(resolve => setTimeout(resolve, backoff));
+            continue;
+          }
+          
+          // If this is the last URL and last attempt, return error
+          if (url === urls[urls.length - 1]) {
+            const hint = {
+              code: parsedAs === 'html' ? 'HTML_BODY' : 
+                    parsedAs === 'empty' ? 'EMPTY_BODY' :
+                    parsedAs === 'csv' ? 'CSV_BODY' : 
+                    'UNKNOWN_NON_JSON',
+              sample: text.slice(0, 300),
+              headers: { contentType, contentLength, cfCacheStatus, age }
+            };
+            
+            await logToSyncLogs(supabase, operationId, 'error', 'Non-JSON response after all retries', hint);
+            return { 
+              success: false, 
+              categoryId,
+              groups: [], 
+              groupsCount: 0, 
+              skipped: 0,
+              error: 'NON_JSON_BODY', 
+              hint 
+            };
+          }
+          
+          // Try next URL
+          break;
+        }
+
+        // Log parsing diagnostics
+        console.log("Envelope keys", Object.keys(json || {}));
+        console.log("Counts", {
+          resultsCount: Array.isArray(json?.results) ? json.results.length : 0,
+          rawCount: Array.isArray(json) ? json.length : 0,
+          groupsCount: Array.isArray(json?.groups) ? json.groups.length : 0,
+          dataCount: Array.isArray(json?.data) ? json.data.length : 0
+        });
+
+        // Primary extraction: TCGplayer-style envelope with results
+        let groups: any[] = [];
+        let parseSource = '';
+        
+        if (Array.isArray(json?.results)) {
+          groups = json.results;
+          parseSource = 'results';
+        } else if (Array.isArray(json?.groups)) {
+          groups = json.groups;
+          parseSource = 'groups';
+        } else if (Array.isArray(json?.data)) {
+          groups = json.data;
+          parseSource = 'data';
+        } else if (Array.isArray(json)) {
+          groups = json;
+          parseSource = 'bare_array';
+        }
+
+        await logToSyncLogs(supabase, operationId, 'info', `Parsed groups from ${parseSource}`, {
+          parseSource,
+          envelopeKeys: Object.keys(json || {}),
+          finalGroupsCount: groups.length,
+          url
+        });
+
+        // Log sample group for debugging
+        if (Array.isArray(groups) && groups[0]) {
+          const sampleKeys = Object.keys(groups[0]).slice(0, 10);
+          console.log("Sample group keys", sampleKeys);
+          await logToSyncLogs(supabase, operationId, 'info', 'Sample group structure', { 
+            sampleKeys,
+            firstGroup: groups[0],
+            totalCount: groups.length 
+          });
+        }
+
+        // Normalize groups - filter and map only valid items
+        const normalized: any[] = [];
+        let skipped = 0;
+        
+        if (Array.isArray(groups)) {
+          for (const g of groups) {
+            // Skip items missing required fields
+            if (!g?.groupId && !g?.id) {
+              skipped++;
+              continue;
+            }
+            if (!g?.name && !g?.displayName) {
+              skipped++;
+              continue;
+            }
+            
+            const normalizedGroup = {
+              group_id: Number(g.groupId ?? g.id),
+              category_id: categoryId,
+              name: String(g.name ?? g.displayName ?? "Unknown"),
+              abbreviation: g.abbreviation ?? null,
+              release_date: g.releaseDate ? new Date(g.releaseDate).toISOString() : null,
+              is_supplemental: g.isSupplemental ?? null,
+              sealed_product: g.sealedProduct ?? null,
+              url_slug: g.slug ?? generateSlug(g.name ?? g.displayName),
+              updated_at: new Date().toISOString()
+            };
+            
+            normalized.push(normalizedGroup);
+          }
+        }
+
+        await logToSyncLogs(supabase, operationId, 'info', `Normalized ${normalized.length} groups, skipped ${skipped} from ${url}`);
+
+        if (normalized.length === 0) {
+          // If no groups found, try next URL if available
+          if (url !== urls[urls.length - 1]) {
+            await logToSyncLogs(supabase, operationId, 'info', `No groups found at ${url}, trying next URL`);
+            break; // Break from attempt loop to try next URL
+          }
+          
+          return { 
+            success: true, 
+            categoryId,
+            groups: [], 
+            groupsCount: 0, 
+            skipped,
+            note: `No groups found for category ${categoryId}` 
+          };
+        }
+
+        return { 
+          success: true, 
+          categoryId,
+          groups: normalized, 
+          groupsCount: normalized.length, 
+          skipped,
+          url // Include which URL worked
+        };
+
+      } catch (error: any) {
         if (attempt < maxAttempts) {
-          console.warn(`JSON parse failed on attempt ${attempt}, retrying...`);
+          console.warn(`Attempt ${attempt} failed for ${url}:`, error.message);
           const backoff = [250, 750, 1500][attempt - 1] + Math.random() * 100;
           await new Promise(resolve => setTimeout(resolve, backoff));
           continue;
         }
         
-        const hint = {
-          code: text.trim().startsWith('<') ? 'HTML_BODY' : 
-                text.trim() === '' ? 'EMPTY_BODY' :
-                text.includes(',') && !text.includes('{') && !text.includes('[') ? 'CSV_BODY' : 
-                'UNKNOWN_NON_JSON',
-          sample: text.slice(0, 300)
-        };
+        // If this is the last URL, throw the error
+        if (url === urls[urls.length - 1]) {
+          await logToSyncLogs(supabase, operationId, 'error', 'Failed to fetch TCGCSV groups after all URLs and retries', { 
+            error: error.message,
+            lastUrl: url
+          });
+          throw error;
+        }
         
-        await logToSyncLogs(supabase, operationId, 'error', 'Non-JSON response after retries', hint);
-        return { success: false, groups: [], groupsCount: 0, error: 'NON_JSON_BODY', hint };
-      }
-
-      // Log envelope diagnostics
-      console.log("Groups envelope keys", Object.keys(json || {}));
-      console.log("Groups counts", {
-        resultsCount: Array.isArray(json?.results) ? json.results.length : 0,
-        rawCount: Array.isArray(json) ? json.length : 0,
-        groupsCount: Array.isArray(json?.groups) ? json.groups.length : 0,
-        dataCount: Array.isArray(json?.data) ? json.data.length : 0
-      });
-
-      // Primary extraction: TCGplayer-style envelope with results
-      let groups: any[] = [];
-      let parseSource = '';
-      
-      if (Array.isArray(json?.results)) {
-        groups = json.results;
-        parseSource = 'results';
-      } else if (Array.isArray(json)) {
-        groups = json;
-        parseSource = 'bare_array';
-      } else if (Array.isArray(json?.groups)) {
-        groups = json.groups;
-        parseSource = 'groups';
-      } else if (Array.isArray(json?.data)) {
-        groups = json.data;
-        parseSource = 'data';
-      }
-
-      await logToSyncLogs(supabase, operationId, 'info', `Parsed groups from ${parseSource}`, {
-        parseSource,
-        envelopeKeys: Object.keys(json || {}),
-        finalGroupsCount: groups.length
-      });
-
-      // Log first item sample if we have groups
-      if (groups.length > 0) {
-        const firstItem = groups[0];
-        console.log("First group keys", Object.keys(firstItem || {}));
-        await logToSyncLogs(supabase, operationId, 'info', 'Group sample keys', { 
-          firstItemKeys: Object.keys(firstItem || {}),
-          totalCount: groups.length 
+        // Try next URL
+        await logToSyncLogs(supabase, operationId, 'warning', `Failed to fetch from ${url}, trying next URL`, { 
+          error: error.message 
         });
+        break; // Break from attempt loop to try next URL
       }
-
-      // Normalize groups - filter and map only valid items
-      const normalized = groups
-        .filter(g => g && (g.groupId ?? g.id) && (g.name ?? g.displayName))
-        .map((g) => ({
-          group_id: Number(g.groupId ?? g.id),
-          category_id: categoryId,
-          name: String(g.name ?? g.displayName ?? "Unknown"),
-          abbreviation: g.abbreviation ?? null,
-          release_date: g.releaseDate ? new Date(g.releaseDate).toISOString() : null,
-          is_supplemental: g.isSupplemental ?? null,
-          sealed_product: g.sealedProduct ?? null,
-          url_slug: g.urlSlug ?? generateSlug(g.name ?? g.displayName),
-          updated_at: new Date().toISOString()
-        }));
-
-      const skipped = groups.length - normalized.length;
-
-      await logToSyncLogs(supabase, operationId, 'info', `Normalized ${normalized.length} groups, skipped ${skipped}`);
-
-      if (normalized.length === 0) {
-        return { 
-          success: true, 
-          groups: [], 
-          groupsCount: 0, 
-          skipped,
-          note: "No groups fetched" 
-        };
-      }
-
-      return { 
-        success: true, 
-        groups: normalized, 
-        groupsCount: normalized.length, 
-        skipped 
-      };
-
-    } catch (error: any) {
-      if (attempt < maxAttempts) {
-        console.warn(`Attempt ${attempt} failed, retrying:`, error.message);
-        const backoff = [250, 750, 1500][attempt - 1] + Math.random() * 100;
-        await new Promise(resolve => setTimeout(resolve, backoff));
-        continue;
-      }
-      
-      await logToSyncLogs(supabase, operationId, 'error', 'Failed to fetch TCGCSV groups after all retries', { error: error.message });
-      throw error;
     }
   }
   
-  throw new Error('Max attempts exceeded');
+  throw new Error('All URLs exhausted');
 }
 
 async function syncGroupsToDB(result: any, operationId: string, supabase: any, dryRun: boolean = false) {
@@ -298,6 +382,7 @@ serve(async (req) => {
       skipped: finalResult.skipped,
       note: finalResult.note,
       dryRun: finalResult.dryRun,
+      url: finalResult.url, // Include which URL worked
       operationId
     });
 
@@ -314,6 +399,7 @@ serve(async (req) => {
       categoryId: null,
       groups: [],
       groupsCount: 0,
+      skipped: 0,
       error: error?.message || "Unknown error",
       operationId
     }, { status: 500 });

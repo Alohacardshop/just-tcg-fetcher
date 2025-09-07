@@ -51,19 +51,28 @@ export const GroupsCard = () => {
         categoryId: Number(selectedCategoryId) 
       }, { suppressToast: true });
       
-      const count = Number.isFinite(result?.groupsCount) ? result.groupsCount : 0;
+      const arr = Array.isArray(result?.groups) ? result.groups : [];
+      const count = Number.isFinite(result?.groupsCount) ? result.groupsCount : arr.length;
+
+      if (!result?.success) {
+        let description = `Error: ${result?.error || 'Unknown error'}`;
+        if (result?.hint?.code) {
+          description += ` (${result.hint.code})`;
+        }
+        if (result?.hint?.sample) {
+          description += ` Sample: ${result.hint.sample.slice(0, 100)}...`;
+        }
+        
+        toast({
+          title: "Sync failed",
+          description,
+          variant: "destructive",
+        });
+        return;
+      }
 
       if (count === 0) {
-        let description = result?.note ? 
-          `No groups returned. ${result.note}` :
-          "No groups returned for this category.";
-        
-        if (result?.error) {
-          description = `Error: ${result.error}`;
-          if (result?.hint?.code) {
-            description += ` (${result.hint.code})`;
-          }
-        }
+        const description = result?.note || "No groups returned for this category.";
         
         toast({
           title: "No groups found",
@@ -72,9 +81,10 @@ export const GroupsCard = () => {
         });
       } else {
         const skippedText = result?.skipped ? ` (${result.skipped} skipped)` : '';
+        const urlText = result?.url ? ` from ${new URL(result.url).pathname}` : '';
         toast({ 
           title: "Groups synced successfully", 
-          description: `Synced ${count} groups${skippedText}` 
+          description: `Synced ${count} groups${skippedText}${urlText}` 
         });
         
         // Refresh the groups list
