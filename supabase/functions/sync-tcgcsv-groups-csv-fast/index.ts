@@ -82,14 +82,17 @@ async function fetchCsvWithFallback(kind: 'groups', id: number) {
   };
 }
 
+// Updated helpers to match CSV columns
 const toBool = (v: any) =>
-  typeof v === 'boolean' ? v :
   v == null ? null :
   ['true', '1', 'yes', 'y'].includes(String(v).trim().toLowerCase()) ? true :
   ['false', '0', 'no', 'n'].includes(String(v).trim().toLowerCase()) ? false : null;
 
-const kebab = (s: string) =>
-  String(s || '').toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+const toTs = (v: any) => {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+};
 
 class StreamingCSVParser {
   private buffer = '';
@@ -139,12 +142,13 @@ class StreamingCSVParser {
   }
 }
 
+// Updated to match actual CSV columns: groupId, name, abbreviation, isSupplemental, publishedOn, modifiedOn, categoryId
 function processGroupRow(row: any, categoryId: number): any | null {
   const groupIdCol = Object.keys(row).find(k => 
     k.includes('groupid') || k.includes('group_id')
   );
   const nameCol = Object.keys(row).find(k => 
-    k.includes('groupname') || k.includes('name')
+    k.includes('name') && !k.includes('groupname') // avoid groupname, just name
   );
   
   if (!groupIdCol || !nameCol) {
@@ -152,7 +156,7 @@ function processGroupRow(row: any, categoryId: number): any | null {
   }
   
   const groupId = Number(row[groupIdCol]);
-  const name = row[nameCol];
+  const name = String(row[nameCol] ?? '').trim();
   
   if (!Number.isFinite(groupId) || !name) {
     return null;
@@ -161,17 +165,14 @@ function processGroupRow(row: any, categoryId: number): any | null {
   const abbreviationCol = Object.keys(row).find(k => 
     k.includes('abbreviation')
   );
-  const releaseDateCol = Object.keys(row).find(k => 
-    k.includes('releasedate') || k.includes('release_date')
-  );
-  const sealedProductCol = Object.keys(row).find(k => 
-    k.includes('sealedproduct') || k.includes('sealed_product')
-  );
   const isSupplementalCol = Object.keys(row).find(k => 
     k.includes('issupplemental') || k.includes('is_supplemental')
   );
-  const slugCol = Object.keys(row).find(k => 
-    k.includes('slug')
+  const publishedOnCol = Object.keys(row).find(k => 
+    k.includes('publishedon') || k.includes('published_on')
+  );
+  const modifiedOnCol = Object.keys(row).find(k => 
+    k.includes('modifiedon') || k.includes('modified_on')
   );
   
   return {
@@ -179,10 +180,9 @@ function processGroupRow(row: any, categoryId: number): any | null {
     category_id: categoryId,
     name: name,
     abbreviation: abbreviationCol ? row[abbreviationCol] || null : null,
-    release_date: releaseDateCol ? row[releaseDateCol] || null : null,
     is_supplemental: isSupplementalCol ? toBool(row[isSupplementalCol]) : null,
-    sealed_product: sealedProductCol ? toBool(row[sealedProductCol]) : null,
-    url_slug: slugCol ? row[slugCol] || kebab(name) : kebab(name),
+    published_on: publishedOnCol ? toTs(row[publishedOnCol]) : null,
+    modified_on: modifiedOnCol ? toTs(row[modifiedOnCol]) : null,
     updated_at: new Date().toISOString()
   };
 }
@@ -302,6 +302,7 @@ async function fetchAndParseGroups(categoryId: number, operationId: string) {
   }
 }
 
+// Column-aware upsert implementation
 async function batchUpsertGroups(groups: any[], operationId: string, supabase: any) {
   if (!Array.isArray(groups) || groups.length === 0) {
     return { upserted: 0, rateUPS: 0 };
@@ -311,7 +312,28 @@ async function batchUpsertGroups(groups: any[], operationId: string, supabase: a
   const startTime = Date.now();
   let totalUpserted = 0;
   
-  console.log(`[${operationId}] Starting batch upsert: ${groups.length} groups, batch size: ${batchSize}`);
+  console.log(`[${operationId}] Starting column-aware batch upsert: ${groups.length} groups, batch size: ${batchSize}`);
+  
+  // Get table columns once at the start for column-aware filtering
+  let allowedColumns: Set<string>;
+  try {
+    const { data: cols } = await supabase
+      .from('information_schema.columns')
+      .select('column_name')
+      .eq('table_schema', 'public')
+      .eq('table_name', 'tcgcsv_groups');
+    
+    allowedColumns = new Set((cols ?? []).map((c: any) => c.column_name));
+    console.log(`[${operationId}] Allowed columns:`, Array.from(allowedColumns));
+  } catch (error) {
+    console.warn(`[${operationId}] Could not fetch table schema, proceeding without column filtering`);
+    allowedColumns = new Set(); // Empty set will pass all columns through
+  }
+  
+  const filterToTable = (row: Record<string, any>) => {
+    if (allowedColumns.size === 0) return row; // No filtering if we couldn't get schema
+    return Object.fromEntries(Object.entries(row).filter(([k]) => allowedColumns.has(k)));
+  };
   
   for (let i = 0; i < groups.length; i += batchSize) {
     const batch = groups.slice(i, i + batchSize);
@@ -321,9 +343,12 @@ async function batchUpsertGroups(groups: any[], operationId: string, supabase: a
     
     while (retries < maxRetries) {
       try {
+        // Filter each row to only include columns that exist in the table
+        const payload = batch.map(filterToTable);
+        
         const { error } = await supabase
           .from('tcgcsv_groups')
-          .upsert(batch, { 
+          .upsert(payload, { 
             onConflict: 'group_id',
             ignoreDuplicates: false 
           });
@@ -395,25 +420,42 @@ serve(async (req) => {
       }, 200, req);
     }
     
-    const { upserted, rateUPS } = await batchUpsertGroups(result.groups, operationId, supabase);
+    try {
+      const { upserted, rateUPS } = await batchUpsertGroups(result.groups, operationId, supabase);
 
-    console.log(`[${operationId}] Groups fast sync completed successfully`);
+      console.log(`[${operationId}] Groups fast sync completed successfully`);
 
-    return json({
-      success: true,
-      categoryId,
-      groupsCount: upserted,
-      usedFallback: result.usedFallback,
-      sourceUrl: result.sourceUrl,
-      summary: {
-        fetched: result.summary.fetched,
-        upserted,
-        skipped: result.summary.skipped,
-        rateRPS: result.summary.rateRPS,
-        rateUPS
-      },
-      operationId
-    }, 200, req);
+      return json({
+        success: true,
+        categoryId,
+        groupsCount: upserted,
+        usedFallback: result.usedFallback,
+        sourceUrl: result.sourceUrl,
+        summary: {
+          fetched: result.summary.fetched,
+          upserted,
+          skipped: result.summary.skipped,
+          rateRPS: result.summary.rateRPS,
+          rateUPS
+        },
+        operationId
+      }, 200, req);
+    } catch (dbError: any) {
+      console.error(`[${operationId}] DB upsert error:`, dbError);
+      
+      return json({
+        success: false,
+        categoryId,
+        groupsCount: 0,
+        summary: { fetched: result.summary.fetched, upserted: 0, skipped: result.summary.skipped },
+        error: 'DB_UPSERT_FAILED',
+        hint: { 
+          code: 'DATABASE_ERROR', 
+          sample: dbError.message 
+        },
+        operationId
+      }, 200, req);
+    }
 
   } catch (error: any) {
     console.error(`[${operationId}] Groups fast sync error:`, error);

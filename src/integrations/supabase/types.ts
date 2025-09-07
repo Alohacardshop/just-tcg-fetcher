@@ -118,7 +118,9 @@ export type Database = {
           group_id: number
           id: string
           is_supplemental: boolean | null
+          modified_on: string | null
           name: string
+          published_on: string | null
           release_date: string | null
           sealed_product: boolean | null
           updated_at: string
@@ -131,7 +133,9 @@ export type Database = {
           group_id: number
           id?: string
           is_supplemental?: boolean | null
+          modified_on?: string | null
           name: string
+          published_on?: string | null
           release_date?: string | null
           sealed_product?: boolean | null
           updated_at?: string
@@ -144,7 +148,9 @@ export type Database = {
           group_id?: number
           id?: string
           is_supplemental?: boolean | null
+          modified_on?: string | null
           name?: string
+          published_on?: string | null
           release_date?: string | null
           sealed_product?: boolean | null
           updated_at?: string
