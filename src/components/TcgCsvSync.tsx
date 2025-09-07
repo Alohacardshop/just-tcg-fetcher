@@ -74,13 +74,13 @@ export function TcgCsvSync() {
 
   // TCGCSV Fetch All mutation
   const fetchMutation = useMutation({
-    mutationFn: async ({ gameId, categoryId }: { gameId: string; categoryId: string }) => {
+    mutationFn: async ({ gameId, categoryId }: { gameId?: string; categoryId?: string }) => {
       const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-all', {
         body: {
           gameId,
           categoryId,
           wipeBefore,
-          background: false
+          background: selectedGameSlug === 'all' // Use background for all games
         }
       });
 
@@ -164,14 +164,20 @@ export function TcgCsvSync() {
       return;
     }
     
-    const game = games.find(g => g.slug === selectedGameSlug);
-    if (!game?.tcgcsv_category_id) {
-      toast.error('Selected game does not have a TCGCSV category ID');
-      return;
-    }
-    
     setFetchResult(null);
-    fetchMutation.mutate({ gameId: game.id, categoryId: game.tcgcsv_category_id });
+    
+    if (selectedGameSlug === 'all') {
+      // All games mode
+      fetchMutation.mutate({ gameId: undefined, categoryId: undefined });
+    } else {
+      // Single game mode
+      const game = games.find(g => g.slug === selectedGameSlug);
+      if (!game?.tcgcsv_category_id) {
+        toast.error('Selected game does not have a TCGCSV category ID');
+        return;
+      }
+      fetchMutation.mutate({ gameId: game.id, categoryId: game.tcgcsv_category_id });
+    }
   };
 
   const handleMatch = (matchType: string) => {
@@ -223,6 +229,14 @@ export function TcgCsvSync() {
                 <SelectValue placeholder="Choose a game to sync..." />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="all">
+                  <div className="flex items-center justify-between w-full">
+                    <span className="font-medium">📦 All Games</span>
+                    <Badge variant="outline" className="ml-2">
+                      {games.length} games
+                    </Badge>
+                  </div>
+                </SelectItem>
                 {games.map((game) => (
                   <SelectItem key={game.id} value={game.slug}>
                     <div className="flex items-center justify-between w-full">
@@ -238,7 +252,19 @@ export function TcgCsvSync() {
           </div>
 
           {/* Selected Game Info */}
-          {selectedGame && (
+          {selectedGameSlug === 'all' ? (
+            <div className="p-3 bg-muted rounded-lg space-y-1">
+              <div className="font-medium">📦 All Games Selected</div>
+              <div className="text-sm text-muted-foreground">
+                Will download data for all {games.length} games with TCGCSV integration • 
+                Total: {games.reduce((sum, g) => sum + g.sets_count, 0)} sets • 
+                {games.reduce((sum, g) => sum + g.cards_count, 0).toLocaleString()} cards
+              </div>
+              <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950 p-2 rounded">
+                ⚠️ This will run in background mode and may take several minutes
+              </div>
+            </div>
+          ) : selectedGame && (
             <div className="p-3 bg-muted rounded-lg space-y-1">
               <div className="font-medium">{selectedGame.name}</div>
               <div className="text-sm text-muted-foreground">
@@ -295,12 +321,12 @@ export function TcgCsvSync() {
                   {fetchMutation.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Downloading TCGCSV Data...
+                      {selectedGameSlug === 'all' ? 'Downloading All Games...' : 'Downloading TCGCSV Data...'}
                     </>
                   ) : (
                     <>
                       <Download className="mr-2 h-4 w-4" />
-                      Download All TCGCSV Data
+                      {selectedGameSlug === 'all' ? 'Download All Games' : 'Download TCGCSV Data'}
                     </>
                   )}
                 </Button>

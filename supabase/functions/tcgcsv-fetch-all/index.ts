@@ -243,6 +243,96 @@ async function fetchAllData(gameId: string, categoryId: string, operationId: str
   }
 }
 
+async function fetchAllGamesData(operationId: string, wipeBefore: boolean, supabase: any) {
+  try {
+    // Get all games with TCGCSV category IDs
+    const { data: games, error } = await supabase
+      .from('games')
+      .select('id, name, tcgcsv_category_id')
+      .not('tcgcsv_category_id', 'is', null)
+    
+    if (error) throw error
+    
+    if (!games || games.length === 0) {
+      throw new Error('No games found with TCGCSV category IDs')
+    }
+    
+    await logToSyncLogs(supabase, operationId, 'progress', `Starting fetch for ${games.length} games`)
+    
+    // Wipe all data if requested
+    if (wipeBefore) {
+      await logToSyncLogs(supabase, operationId, 'progress', 'Wiping all existing TCGCSV data')
+      await supabase.from('tcgcsv_products').delete().neq('game_id', 'null')
+      await supabase.from('tcgcsv_groups').delete().neq('game_id', 'null')
+    }
+    
+    // Process all games concurrently with limited concurrency
+    const limit = pLimit(3) // Process 3 games at once to avoid overwhelming the API
+    let totalGroupsUpserted = 0
+    let totalProductsUpserted = 0
+    const results = []
+    
+    const gamePromises = games.map(game => 
+      limit(async () => {
+        try {
+          const gameOperationId = `${operationId}-game-${game.id}`
+          await logToSyncLogs(supabase, gameOperationId, 'progress', `Starting fetch for game: ${game.name}`)
+          
+          const result = await fetchAllData(game.id, game.tcgcsv_category_id, gameOperationId, false, supabase)
+          
+          totalGroupsUpserted += result.groupsUpserted
+          totalProductsUpserted += result.productsUpserted
+          
+          results.push({
+            gameId: game.id,
+            gameName: game.name,
+            ...result
+          })
+          
+          await logToSyncLogs(supabase, gameOperationId, 'completed', `Completed fetch for game: ${game.name}`)
+          
+          return result
+        } catch (error) {
+          console.error(`Error processing game ${game.name}:`, error)
+          await logToSyncLogs(supabase, operationId, 'error', `Failed to process game ${game.name}: ${error.message}`)
+          
+          results.push({
+            gameId: game.id,
+            gameName: game.name,
+            success: false,
+            message: error.message
+          })
+          
+          // Don't throw here, let other games continue
+        }
+      })
+    )
+    
+    await Promise.all(gamePromises)
+    
+    await logToSyncLogs(supabase, operationId, 'completed', 'All games fetch completed', {
+      totalGames: games.length,
+      totalGroupsUpserted,
+      totalProductsUpserted,
+      results
+    })
+    
+    return {
+      success: true,
+      totalGames: games.length,
+      totalGroupsUpserted,
+      totalProductsUpserted,
+      message: `Successfully processed ${games.length} games with ${totalGroupsUpserted} groups and ${totalProductsUpserted} products`,
+      results
+    }
+    
+  } catch (error) {
+    console.error('Error in fetchAllGamesData:', error)
+    await logToSyncLogs(supabase, operationId, 'error', `All games fetch failed: ${error.message}`, { error: error.message })
+    throw error
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -251,9 +341,46 @@ Deno.serve(async (req) => {
   try {
     const { gameId, categoryId, wipeBefore = false, background = false } = await req.json()
 
+    // Handle "all games" mode when no specific game is provided
+    if (!gameId && !categoryId) {
+      // Initialize Supabase client
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      const supabase = createClient(supabaseUrl, supabaseKey)
+
+      const operationId = `tcgcsv-fetch-all-games-${Date.now()}`
+      
+      await logToSyncLogs(supabase, operationId, 'started', 'Starting TCGCSV fetch for all games', {
+        wipeBefore,
+        background
+      })
+
+      if (background) {
+        // Start background task and return immediately
+        EdgeRuntime.waitUntil(fetchAllGamesData(operationId, wipeBefore, supabase))
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            message: 'TCGCSV fetch for all games started in background',
+            operationId 
+          }),
+          { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      } else {
+        // Run synchronously
+        const result = await fetchAllGamesData(operationId, wipeBefore, supabase)
+        
+        return new Response(
+          JSON.stringify(result),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
+
     if (!gameId || !categoryId) {
       return new Response(
-        JSON.stringify({ error: 'gameId and categoryId are required' }),
+        JSON.stringify({ error: 'Either provide both gameId and categoryId, or neither for all games mode' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
