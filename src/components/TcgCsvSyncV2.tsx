@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from '@/integrations/supabase/client';
 import { useSyncLogs } from "@/hooks/useSyncStatus";
 import { Search, RefreshCw, Download, Zap, Activity, Clock, Route } from 'lucide-react';
-import { GuidedSyncPanel } from './GuidedSyncPanel';
+import { TcgCsvGuidedPanel } from './TcgCsvGuidedPanel';
 import { SetMappingPanel } from './SetMappingPanel';
 
 interface Game {
@@ -65,6 +65,7 @@ export const TcgCsvSyncV2 = () => {
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [currentOperationId, setCurrentOperationId] = useState<string>('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
 
   // Get sync logs for current operation
   const { data: syncLogs } = useSyncLogs(currentOperationId);
@@ -314,9 +315,9 @@ export const TcgCsvSyncV2 = () => {
             </TabsList>
             
             <TabsContent value="workflow" className="space-y-4">
-              <GuidedSyncPanel 
-                selectedGame={selectedGame}
-                onGameSelect={setSelectedGame}
+              <TcgCsvGuidedPanel 
+                selectedCategoryId={selectedCategoryId}
+                onSelectCategory={setSelectedCategoryId}
               />
             </TabsContent>
 
