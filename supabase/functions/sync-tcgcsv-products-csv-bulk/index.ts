@@ -33,6 +33,26 @@ class StreamingCSVParser {
   private headersParsed = false;
   private rowCount = 0;
 
+  private splitCsv(line: string): string[] {
+    const result: string[] = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+        else { inQuotes = !inQuotes; }
+      } else if (ch === ',' && !inQuotes) {
+        result.push(cur);
+        cur = '';
+      } else {
+        cur += ch;
+      }
+    }
+    result.push(cur);
+    return result.map(c => c.trim().replace(/^"|"$/g, ''));
+  }
+
   parseChunk(chunk: string): any[] {
     this.buffer += chunk;
     const rows: any[] = [];
@@ -44,12 +64,12 @@ class StreamingCSVParser {
       if (!line.trim()) continue;
       
       if (!this.headersParsed) {
-        this.headers = line.split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+        this.headers = this.splitCsv(line).map(h => h.trim().toLowerCase());
         this.headersParsed = true;
         continue;
       }
       
-      const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
+      const cols = this.splitCsv(line);
       const row: any = {};
       
       for (let i = 0; i < this.headers.length && i < cols.length; i++) {
@@ -303,11 +323,20 @@ async function batchUpsertProducts(products: any[], operationId: string, supabas
     return 0;
   }
 
+  // Deduplicate by product_id to avoid ON CONFLICT affecting the same row twice
+  const uniqueMap = new Map<number, any>();
+  for (const p of products) {
+    if (p && typeof p.product_id === 'number') {
+      uniqueMap.set(p.product_id, p);
+    }
+  }
+  const uniqueProducts = Array.from(uniqueMap.values());
+
   const batchSize = Number(Deno.env.get('UPSERT_BATCH_SIZE')) || 5000;
   let totalUpserted = 0;
   
-  for (let i = 0; i < products.length; i += batchSize) {
-    const batch = products.slice(i, i + batchSize);
+  for (let i = 0; i < uniqueProducts.length; i += batchSize) {
+    const batch = uniqueProducts.slice(i, i + batchSize);
     
     let retries = 0;
     const maxRetries = 3;

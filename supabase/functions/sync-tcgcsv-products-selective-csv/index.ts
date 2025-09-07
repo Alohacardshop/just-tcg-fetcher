@@ -30,6 +30,31 @@ async function logToSyncLogs(supabase: any, operationId: string, status: string,
 const kebab = (s: string) =>
   String(s || '').toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      result.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  result.push(cur);
+  return result.map(c => c.trim().replace(/^"|"$/g, ''));
+}
+
+
 async function resolveGroupIds(categoryId: number, groupNameFilters: string[] | undefined, maxGroups: number, supabase: any, operationId: string) {
   // Get all groups for the category
   const { data: groups, error } = await supabase
@@ -145,7 +170,7 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
         };
       }
 
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+      const headers = parseCsvLine(lines[0]).map(h => h.trim().toLowerCase());
       const rows = lines.slice(1);
 
       // Find required columns
@@ -173,7 +198,7 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
       let skipped = 0;
 
       for (const row of rows) {
-        const cols = row.split(',').map(c => c.trim().replace(/"/g, ''));
+        const cols = parseCsvLine(row);
         
         const productId = Number(cols[productIdIdx]);
         const name = cols[nameIdx];
@@ -244,11 +269,20 @@ async function syncProductsToDB(products: any[], operationId: string, supabase: 
   }
 
   try {
+    // Deduplicate by product_id to avoid ON CONFLICT affecting the same row twice
+    const uniqueMap = new Map<number, any>();
+    for (const p of products) {
+      if (p && typeof p.product_id === 'number') {
+        uniqueMap.set(p.product_id, p);
+      }
+    }
+    const unique = Array.from(uniqueMap.values());
+
     const chunkSize = 500;
     let totalUpserted = 0;
     
-    for (let i = 0; i < products.length; i += chunkSize) {
-      const chunk = products.slice(i, i + chunkSize);
+    for (let i = 0; i < unique.length; i += chunkSize) {
+      const chunk = unique.slice(i, i + chunkSize);
       
       const { data, error } = await supabase
         .from('tcgcsv_products')
