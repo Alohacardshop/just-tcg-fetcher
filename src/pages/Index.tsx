@@ -5,6 +5,7 @@ import { DataImportPanel } from '@/components/DataImportPanel';
 import { GameCard } from '@/components/GameCard';
 import { SetCard } from '@/components/SetCard';
 import { CardGrid } from '@/components/CardGrid';
+import { TcgCsvSync } from '@/components/TcgCsvSync';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -196,7 +197,7 @@ const Index = () => {
         
         {currentView === 'dashboard' && (
           <Tabs defaultValue="overview" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4 bg-card border border-border">
+            <TabsList className="grid w-full grid-cols-5 bg-card border border-border">
               <TabsTrigger value="overview" className="flex items-center gap-2">
                 <Database className="h-4 w-4" />
                 Overview
@@ -208,6 +209,10 @@ const Index = () => {
               <TabsTrigger value="search" className="flex items-center gap-2">
                 <Search className="h-4 w-4" />
                 Search Cards
+              </TabsTrigger>
+              <TabsTrigger value="tcgcsv" className="flex items-center gap-2">
+                <Download className="h-4 w-4" />
+                TCG CSV Sync
               </TabsTrigger>
               <TabsTrigger value="import" className="flex items-center gap-2">
                 <Download className="h-4 w-4" />
@@ -275,6 +280,10 @@ const Index = () => {
                   </div>
                 </Card>
               )}
+            </TabsContent>
+
+            <TabsContent value="tcgcsv" className="space-y-6">
+              <TcgCsvSync />
             </TabsContent>
 
             <TabsContent value="import" className="space-y-6">
