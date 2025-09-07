@@ -199,7 +199,7 @@ async function fetchAndParseProducts(
           });
 
           const productIdCol = Object.keys(normalizedRow).find(k => 
-            k === 'productid' || k === 'id'
+            k === 'productid' || k === 'id' || k === 'promoproductid'
           );
           const nameCol = Object.keys(normalizedRow).find(k => 
             k === 'name' || k === 'cleanname' || k === 'productname'
