@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 function cors(req: Request) {
   const origin = req.headers.get('Origin') ?? '*';
@@ -124,7 +124,8 @@ async function fetchAndParseProducts(
         'Accept': 'text/csv, */*',
         'Accept-Encoding': 'gzip, deflate, br',
         'Cache-Control': 'no-cache',
-        'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)'
+        'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)',
+        'Referer': 'https://tcgcsv.com/'
       },
       signal: controller.signal
     });
@@ -388,11 +389,8 @@ serve(async (req) => {
 
   const operationId = crypto.randomUUID();
   
-  // Create Supabase client with token pass-through
-  const auth = req.headers.get('Authorization') ?? `Bearer ${SUPABASE_ANON_KEY}`;
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: auth } }
-  });
+  // Create Supabase client with service role for DB writes
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
   try {
     const { 
