@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { gameId, dryRun = true, background = false, onlyUnmapped = true, matchType = 'both' } = await req.json()
+    const { gameId, setId, dryRun = true, background = false, onlyUnmapped = true, matchType = 'both', operationId: providedOperationId } = await req.json()
 
     if (!gameId) {
       return new Response(
@@ -455,7 +455,7 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseKey)
 
-    const operationId = `tcgcsv-match-${gameId}-${Date.now()}`
+    const operationId = providedOperationId || `tcgcsv-match-${gameId}-${Date.now()}`
     
     const matchOperation = async () => {
       const operationStart = Date.now()
@@ -481,8 +481,8 @@ Deno.serve(async (req) => {
         // Step 2: Match products to cards (if requested)
         if (matchType === 'products' || matchType === 'both') {
           console.log('Starting product-to-card matching...')
-          productMatching = await matchProductsToCards(supabase, gameId, operationId, dryRun, onlyUnmapped)
-          console.log('Product matching completed:', productMatching.totalMatched, 'matched')
+          productMatching = await matchProductsToCards(supabase, gameId, operationId, dryRun, onlyUnmapped, setId)
+          console.log('Product matching completed:', productMatching.stats?.totalMatches || 0, 'matched')
         }
 
         const executionTime = Date.now() - operationStart

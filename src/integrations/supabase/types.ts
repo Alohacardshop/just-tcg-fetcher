@@ -121,6 +121,8 @@ export type Database = {
           product_url: string | null
           rarity: string | null
           set_id: string
+          tcgcsv_match_confidence: number | null
+          tcgcsv_match_method: string | null
           tcgplayer_product_id: number | null
           updated_at: string
         }
@@ -136,6 +138,8 @@ export type Database = {
           product_url?: string | null
           rarity?: string | null
           set_id: string
+          tcgcsv_match_confidence?: number | null
+          tcgcsv_match_method?: string | null
           tcgplayer_product_id?: number | null
           updated_at?: string
         }
@@ -151,6 +155,8 @@ export type Database = {
           product_url?: string | null
           rarity?: string | null
           set_id?: string
+          tcgcsv_match_confidence?: number | null
+          tcgcsv_match_method?: string | null
           tcgplayer_product_id?: number | null
           updated_at?: string
         }
@@ -338,7 +344,9 @@ export type Database = {
           last_sync_error: string | null
           last_synced_at: string | null
           name: string
+          partial_sync_data: Json | null
           release_date: string | null
+          resume_token: string | null
           sealed_synced_count: number
           sync_status: string
           tcgcsv_group_id: string | null
@@ -355,7 +363,9 @@ export type Database = {
           last_sync_error?: string | null
           last_synced_at?: string | null
           name: string
+          partial_sync_data?: Json | null
           release_date?: string | null
+          resume_token?: string | null
           sealed_synced_count?: number
           sync_status?: string
           tcgcsv_group_id?: string | null
@@ -372,7 +382,9 @@ export type Database = {
           last_sync_error?: string | null
           last_synced_at?: string | null
           name?: string
+          partial_sync_data?: Json | null
           release_date?: string | null
+          resume_token?: string | null
           sealed_synced_count?: number
           sync_status?: string
           tcgcsv_group_id?: string | null
@@ -425,11 +437,14 @@ export type Database = {
           created_by: string | null
           details: Json | null
           duration_ms: number | null
+          error_count: number | null
           game_id: string | null
           id: string
           message: string
           operation_id: string
           operation_type: string
+          progress_current: number | null
+          progress_total: number | null
           set_id: string | null
           status: string
         }
@@ -438,11 +453,14 @@ export type Database = {
           created_by?: string | null
           details?: Json | null
           duration_ms?: number | null
+          error_count?: number | null
           game_id?: string | null
           id?: string
           message: string
           operation_id: string
           operation_type: string
+          progress_current?: number | null
+          progress_total?: number | null
           set_id?: string | null
           status: string
         }
@@ -451,11 +469,14 @@ export type Database = {
           created_by?: string | null
           details?: Json | null
           duration_ms?: number | null
+          error_count?: number | null
           game_id?: string | null
           id?: string
           message?: string
           operation_id?: string
           operation_type?: string
+          progress_current?: number | null
+          progress_total?: number | null
           set_id?: string | null
           status?: string
         }
@@ -475,6 +496,57 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      sync_status: {
+        Row: {
+          completed_at: string | null
+          created_at: string | null
+          error_message: string | null
+          game_id: string | null
+          id: string
+          operation_id: string
+          operation_type: string
+          progress_current: number | null
+          progress_total: number | null
+          resume_data: Json | null
+          set_id: string | null
+          started_at: string | null
+          status: string
+          updated_at: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          game_id?: string | null
+          id?: string
+          operation_id: string
+          operation_type: string
+          progress_current?: number | null
+          progress_total?: number | null
+          resume_data?: Json | null
+          set_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          game_id?: string | null
+          id?: string
+          operation_id?: string
+          operation_type?: string
+          progress_current?: number | null
+          progress_total?: number | null
+          resume_data?: Json | null
+          set_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string | null
+        }
+        Relationships: []
       }
       tcgcsv_groups: {
         Row: {
