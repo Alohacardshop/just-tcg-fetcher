@@ -1,13 +1,14 @@
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '@/integrations/supabase/client';
+import { Search, RefreshCw, Download, Zap } from 'lucide-react';
 
 interface Game {
   id: string;
@@ -19,12 +20,14 @@ interface Category {
   id: string;
   category_id: string;
   name: string;
+  data: any;
 }
 
 interface Group {
   group_id: string;
   name: string;
   tcgcsv_category_id: string;
+  release_date: string;
 }
 
 interface FetchResult {
@@ -49,10 +52,10 @@ interface MatchResult {
 
 export const TcgCsvSyncV2 = () => {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedGame, setSelectedGame] = useState<string>('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const [selectedGroup, setSelectedGroup] = useState<string>('');
-  const [activeTab, setActiveTab] = useState('fetch');
+  const [searchTerm, setSearchTerm] = useState('');
   const [dryRun, setDryRun] = useState(true);
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
@@ -72,12 +75,12 @@ export const TcgCsvSyncV2 = () => {
   });
 
   // Fetch categories
-  const { data: categories, isLoading: categoriesLoading } = useQuery({
+  const { data: categories, isLoading: categoriesLoading, refetch: refetchCategories } = useQuery({
     queryKey: ['tcgcsv-categories'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('tcgcsv_categories')
-        .select('id, category_id, name')
+        .select('id, category_id, name, data')
         .order('name');
       
       if (error) throw error;
@@ -85,43 +88,81 @@ export const TcgCsvSyncV2 = () => {
     },
   });
 
-  // Fetch groups for selected category
+  // Fetch groups for selected categories
   const { data: groups, isLoading: groupsLoading } = useQuery({
-    queryKey: ['tcgcsv-groups', selectedCategory],
+    queryKey: ['tcgcsv-groups', selectedCategories],
     queryFn: async () => {
-      if (!selectedCategory) return [];
+      if (selectedCategories.length === 0) return [];
       
       const { data, error } = await supabase
         .from('tcgcsv_groups')
-        .select('group_id, name, tcgcsv_category_id')
-        .eq('tcgcsv_category_id', selectedCategory)
+        .select('group_id, name, tcgcsv_category_id, release_date')
+        .in('tcgcsv_category_id', selectedCategories)
         .order('name');
       
       if (error) throw error;
       return data || [];
     },
-    enabled: !!selectedCategory,
+    enabled: selectedCategories.length > 0,
   });
 
   // TCGCSV Fetch Mutation
   const fetchMutation = useMutation({
-    mutationFn: async ({ fetchType, categoryId, groupId }: { fetchType: string; categoryId?: string; groupId?: string }) => {
-      const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
-        body: { fetchType, categoryId, groupId }
-      });
+    mutationFn: async ({ fetchType, categoryIds }: { fetchType: string; categoryIds?: string[] }) => {
+      if (fetchType === 'categories') {
+        const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
+          body: { fetchType: 'categories' }
+        });
+        if (error) throw error;
+        return data;
+      }
       
-      if (error) throw error;
-      return data;
+      if (fetchType === 'selected' && categoryIds && categoryIds.length > 0) {
+        // Fetch groups and products for selected categories
+        const results = [];
+        for (const categoryId of categoryIds) {
+          // Fetch groups for this category
+          const { data: groupData, error: groupError } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
+            body: { fetchType: 'groups', categoryId }
+          });
+          if (groupError) throw groupError;
+          results.push(groupData);
+          
+          // Get groups to fetch products
+          const { data: groups } = await supabase
+            .from('tcgcsv_groups')
+            .select('group_id')
+            .eq('tcgcsv_category_id', categoryId);
+          
+          // Fetch products for each group
+          for (const group of groups || []) {
+            const { data: productData, error: productError } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
+              body: { fetchType: 'products', categoryId, groupId: group.group_id }
+            });
+            if (productError) throw productError;
+            results.push(productData);
+          }
+        }
+        return { success: true, message: `Fetched data for ${categoryIds.length} categories`, operationId: `batch-${Date.now()}` };
+      }
+      
+      if (fetchType === 'all') {
+        const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
+          body: { fetchType: 'all' }
+        });
+        if (error) throw error;
+        return data;
+      }
+      
+      throw new Error('Invalid fetch type');
     },
     onSuccess: (data) => {
       setFetchResult(data);
-      // Refetch the relevant data
-      if (data.success) {
-        window.location.reload(); // Quick refresh to show new data
-      }
+      // Refetch all data
+      queryClient.invalidateQueries();
       toast({
         title: "Fetch Successful",
-        description: data.message,
+        description: data.message || 'Data fetched successfully',
       });
     },
     onError: (error: any) => {
@@ -136,9 +177,9 @@ export const TcgCsvSyncV2 = () => {
 
   // Smart Match Mutation
   const matchMutation = useMutation({
-    mutationFn: async ({ gameId, setId, dryRun }: { gameId: string; setId?: string; dryRun: boolean }) => {
+    mutationFn: async ({ gameId, dryRun }: { gameId: string; dryRun: boolean }) => {
       const { data, error } = await supabase.functions.invoke('tcgcsv-smart-match', {
-        body: { gameId, setId, dryRun }
+        body: { gameId, dryRun }
       });
       
       if (error) throw error;
@@ -163,293 +204,266 @@ export const TcgCsvSyncV2 = () => {
     },
   });
 
-  const handleFetchCategories = () => {
-    fetchMutation.mutate({ fetchType: 'categories' });
+  // Filter categories based on search
+  const filteredCategories = categories?.filter(cat => 
+    cat.name.toLowerCase().includes(searchTerm.toLowerCase())
+  ) || [];
+
+  const handleCategoryToggle = (categoryId: string) => {
+    setSelectedCategories(prev => 
+      prev.includes(categoryId) 
+        ? prev.filter(id => id !== categoryId)
+        : [...prev, categoryId]
+    );
   };
 
-  const handleFetchGroups = () => {
-    if (!selectedCategory) {
-      toast({
-        title: "No Category Selected",
-        description: "Please select a category first",
-        variant: "destructive",
-      });
-      return;
-    }
-    fetchMutation.mutate({ fetchType: 'groups', categoryId: selectedCategory });
+  const handleSelectAll = () => {
+    setSelectedCategories(filteredCategories.map(cat => cat.category_id));
   };
 
-  const handleFetchProducts = () => {
-    if (!selectedCategory || !selectedGroup) {
-      toast({
-        title: "Missing Selection",
-        description: "Please select both category and group",
-        variant: "destructive",
-      });
-      return;
-    }
-    fetchMutation.mutate({ 
-      fetchType: 'products', 
-      categoryId: selectedCategory, 
-      groupId: selectedGroup 
-    });
-  };
-
-  const handleFetchAll = () => {
-    fetchMutation.mutate({ fetchType: 'all' });
-  };
-
-  const handleSmartMatch = () => {
-    if (!selectedGame) {
-      toast({
-        title: "No Game Selected",
-        description: "Please select a game first",
-        variant: "destructive",
-      });
-      return;
-    }
-    matchMutation.mutate({ 
-      gameId: selectedGame, 
-      dryRun 
-    });
+  const handleDeselectAll = () => {
+    setSelectedCategories([]);
   };
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>TCGCSV Integration V2</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Download className="h-5 w-5" />
+            TCGCSV Data Fetcher
+          </CardTitle>
           <CardDescription>
-            Fetch TCGCSV data and intelligently match with JustTCG cards
+            Fetch and sync trading card data from TCGCSV with intelligent matching
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <div className="flex gap-4 mb-6">
+            <Button 
+              onClick={() => fetchMutation.mutate({ fetchType: 'categories' })}
+              disabled={fetchMutation.isPending}
+              variant="outline"
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${fetchMutation.isPending ? 'animate-spin' : ''}`} />
+              Refresh Categories
+            </Button>
+            
+            <Button 
+              onClick={() => fetchMutation.mutate({ fetchType: 'all' })}
+              disabled={fetchMutation.isPending}
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              Fetch All Data
+            </Button>
+          </div>
+
+          <Tabs defaultValue="categories" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="fetch">Fetch Data</TabsTrigger>
+              <TabsTrigger value="categories">Browse Categories ({categories?.length || 0})</TabsTrigger>
               <TabsTrigger value="match">Smart Match</TabsTrigger>
             </TabsList>
             
-            <TabsContent value="fetch" className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Category</label>
-                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories?.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.category_id}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+            <TabsContent value="categories" className="space-y-4">
+              {/* Search and Controls */}
+              <div className="flex gap-4 items-center">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search categories..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
                 </div>
-                
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Group (Set)</label>
-                  <Select 
-                    value={selectedGroup} 
-                    onValueChange={setSelectedGroup}
-                    disabled={!selectedCategory || groupsLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select group" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {groups?.map((group) => (
-                        <SelectItem key={group.group_id} value={group.group_id}>
-                          {group.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <Button 
-                  onClick={handleFetchCategories}
-                  disabled={fetchMutation.isPending}
-                  variant="outline"
-                >
-                  Fetch Categories
+                <Button variant="outline" size="sm" onClick={handleSelectAll}>
+                  Select All ({filteredCategories.length})
                 </Button>
-                
-                <Button 
-                  onClick={handleFetchGroups}
-                  disabled={fetchMutation.isPending || !selectedCategory}
-                  variant="outline"
-                >
-                  Fetch Groups
-                </Button>
-                
-                <Button 
-                  onClick={handleFetchProducts}
-                  disabled={fetchMutation.isPending || !selectedCategory || !selectedGroup}
-                  variant="outline"
-                >
-                  Fetch Products
-                </Button>
-                
-                <Button 
-                  onClick={handleFetchAll}
-                  disabled={fetchMutation.isPending}
-                >
-                  Fetch All
+                <Button variant="outline" size="sm" onClick={handleDeselectAll}>
+                  Clear ({selectedCategories.length})
                 </Button>
               </div>
+
+              {/* Selected Categories Actions */}
+              {selectedCategories.length > 0 && (
+                <Card className="bg-primary/5 border-primary/20">
+                  <CardContent className="pt-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium">{selectedCategories.length} categories selected</p>
+                        <p className="text-sm text-muted-foreground">
+                          This will fetch groups and products for the selected categories
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => fetchMutation.mutate({ 
+                          fetchType: 'selected', 
+                          categoryIds: selectedCategories 
+                        })}
+                        disabled={fetchMutation.isPending}
+                        className="flex items-center gap-2"
+                      >
+                        <Download className="h-4 w-4" />
+                        Fetch Selected Data
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Categories Grid */}
+              {categoriesLoading ? (
+                <div className="text-center py-8">Loading categories...</div>
+              ) : filteredCategories.length === 0 ? (
+                <Card>
+                  <CardContent className="pt-6 text-center">
+                    <p className="text-muted-foreground">
+                      {categories?.length === 0 ? 'No categories found. Click "Refresh Categories" to fetch data.' : 'No categories match your search.'}
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {filteredCategories.map((category) => (
+                    <Card 
+                      key={category.id} 
+                      className={`cursor-pointer transition-colors hover:shadow-md ${
+                        selectedCategories.includes(category.category_id) 
+                          ? 'bg-primary/10 border-primary shadow-md' 
+                          : 'hover:bg-muted/50'
+                      }`}
+                      onClick={() => handleCategoryToggle(category.category_id)}
+                    >
+                      <CardContent className="pt-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <h3 className="font-medium text-sm leading-tight">{category.name}</h3>
+                            <p className="text-xs text-muted-foreground mt-1">ID: {category.category_id}</p>
+                            {category.data && typeof category.data === 'object' && 'popularity' in category.data && (
+                              <Badge variant="secondary" className="mt-2 text-xs">
+                                Popularity: {(category.data as any).popularity}
+                              </Badge>
+                            )}
+                          </div>
+                          <Checkbox
+                            checked={selectedCategories.includes(category.category_id)}
+                            onChange={() => {}}
+                            className="ml-2"
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {/* Groups for Selected Categories */}
+              {selectedCategories.length > 0 && groups && groups.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Available Groups ({groups.length})</CardTitle>
+                    <CardDescription>
+                      Sets/Groups available for selected categories
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto">
+                      {groups.map((group) => (
+                        <div 
+                          key={group.group_id} 
+                          className="p-3 border rounded-lg bg-muted/30"
+                        >
+                          <div className="font-medium text-sm">{group.name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            ID: {group.group_id}
+                            {group.release_date && (
+                              <span className="block">Released: {group.release_date}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
             
             <TabsContent value="match" className="space-y-4">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Game</label>
-                  <Select value={selectedGame} onValueChange={setSelectedGame}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select game" />
-                    </SelectTrigger>
-                    <SelectContent>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Zap className="h-5 w-5" />
+                    Smart Matching
+                  </CardTitle>
+                  <CardDescription>
+                    Match JustTCG cards with TCGCSV products using AI-powered algorithms
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Select Game</label>
+                    <select 
+                      value={selectedGame} 
+                      onChange={(e) => setSelectedGame(e.target.value)}
+                      className="w-full p-2 border rounded-md"
+                      disabled={gamesLoading}
+                    >
+                      <option value="">Select a game...</option>
                       {games?.map((game) => (
-                        <SelectItem key={game.id} value={game.id}>
+                        <option key={game.id} value={game.id}>
                           {game.name}
-                        </SelectItem>
+                        </option>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="dryRun"
-                    checked={dryRun}
-                    onCheckedChange={(checked) => setDryRun(checked === true)}
-                  />
-                  <label htmlFor="dryRun" className="text-sm font-medium">
-                    Dry run (preview matches only)
-                  </label>
-                </div>
-                
-                <Button 
-                  onClick={handleSmartMatch}
-                  disabled={matchMutation.isPending || !selectedGame}
-                  className="w-full"
-                >
-                  {dryRun ? 'Preview Matches' : 'Execute Smart Match'}
-                </Button>
-              </div>
+                    </select>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="dryRun"
+                      checked={dryRun}
+                      onCheckedChange={(checked) => setDryRun(checked === true)}
+                    />
+                    <label htmlFor="dryRun" className="text-sm font-medium">
+                      Dry run (preview matches only, don't save)
+                    </label>
+                  </div>
+                  
+                  <Button 
+                    onClick={() => matchMutation.mutate({ gameId: selectedGame, dryRun })}
+                    disabled={matchMutation.isPending || !selectedGame}
+                    className="w-full flex items-center gap-2"
+                  >
+                    <Zap className="h-4 w-4" />
+                    {dryRun ? 'Preview Smart Matches' : 'Execute Smart Matching'}
+                  </Button>
+                </CardContent>
+              </Card>
             </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
 
-      {/* Data Overview */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Current Data</CardTitle>
-          <CardDescription>Overview of fetched TCGCSV data</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 border rounded-lg">
-              <div className="text-2xl font-bold">{categories?.length || 0}</div>
-              <div className="text-sm text-muted-foreground">Categories</div>
-              {categoriesLoading && <div className="text-xs">Loading...</div>}
-            </div>
-            <div className="p-4 border rounded-lg">
-              <div className="text-2xl font-bold">{groups?.length || 0}</div>
-              <div className="text-sm text-muted-foreground">Groups {selectedCategory ? `(${categories?.find(c => c.category_id === selectedCategory)?.name})` : ''}</div>
-              {groupsLoading && <div className="text-xs">Loading...</div>}
-            </div>
-            <div className="p-4 border rounded-lg">
-              <div className="text-2xl font-bold">-</div>
-              <div className="text-sm text-muted-foreground">Products (select group)</div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Categories Preview */}
-      {categories && categories.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Categories ({categories.length})</CardTitle>
-            <CardDescription>Available game categories from TCGCSV</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto">
-              {categories.map((category) => (
-                <div 
-                  key={category.id} 
-                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                    selectedCategory === category.category_id 
-                      ? 'bg-primary/10 border-primary' 
-                      : 'hover:bg-muted'
-                  }`}
-                  onClick={() => setSelectedCategory(category.category_id)}
-                >
-                  <div className="font-medium text-sm">{category.name}</div>
-                  <div className="text-xs text-muted-foreground">ID: {category.category_id}</div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Groups Preview */}
-      {groups && groups.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Groups ({groups.length})</CardTitle>
-            <CardDescription>Available sets/groups for selected category</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto">
-              {groups.map((group) => (
-                <div 
-                  key={group.group_id} 
-                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                    selectedGroup === group.group_id 
-                      ? 'bg-primary/10 border-primary' 
-                      : 'hover:bg-muted'
-                  }`}
-                  onClick={() => setSelectedGroup(group.group_id)}
-                >
-                  <div className="font-medium text-sm">{group.name}</div>
-                  <div className="text-xs text-muted-foreground">ID: {group.group_id}</div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Results */}
       {(fetchResult || matchResult) && (
         <Card>
           <CardHeader>
-            <CardTitle>Latest Operation Results</CardTitle>
+            <CardTitle>Operation Results</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {fetchResult && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Badge variant={fetchResult.success ? "default" : "destructive"}>
-                    Fetch {fetchResult.success ? "Success" : "Failed"}
+                    {fetchResult.success ? "✓ Success" : "✗ Failed"}
                   </Badge>
                   <span className="text-sm text-muted-foreground">
-                    Operation ID: {fetchResult.operationId}
+                    {fetchResult.operationId}
                   </span>
                 </div>
-                {fetchResult.message && (
-                  <p className="text-sm">{fetchResult.message}</p>
-                )}
-                {fetchResult.error && (
-                  <p className="text-sm text-destructive">{fetchResult.error}</p>
-                )}
+                <p className="text-sm">
+                  {fetchResult.message || fetchResult.error}
+                </p>
               </div>
             )}
             
@@ -457,19 +471,16 @@ export const TcgCsvSyncV2 = () => {
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Badge variant={matchResult.success ? "default" : "destructive"}>
-                    Match {matchResult.success ? "Success" : "Failed"}
+                    {matchResult.success ? "✓ Matching Complete" : "✗ Matching Failed"}
                   </Badge>
-                  <span className="text-sm text-muted-foreground">
-                    Operation ID: {matchResult.operationId}
-                  </span>
                 </div>
                 
                 {matchResult.stats && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                    <div>Total: {matchResult.stats.total}</div>
-                    <div>Matched: {matchResult.stats.matched}</div>
-                    <div>Skipped: {matchResult.stats.skipped}</div>
-                    <div>Unmatched: {matchResult.stats.unmatched}</div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm bg-muted/30 p-4 rounded-lg">
+                    <div><strong>Total:</strong> {matchResult.stats.total}</div>
+                    <div><strong>Matched:</strong> {matchResult.stats.matched}</div>
+                    <div><strong>Skipped:</strong> {matchResult.stats.skipped}</div>
+                    <div><strong>Unmatched:</strong> {matchResult.stats.unmatched}</div>
                   </div>
                 )}
                 
@@ -481,23 +492,6 @@ export const TcgCsvSyncV2 = () => {
           </CardContent>
         </Card>
       )}
-      
-      {/* Info Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>How It Works</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p><strong>1. Fetch Data:</strong> Download categories, groups (sets), and products (cards) from TCGCSV</p>
-          <p><strong>2. Smart Match:</strong> Intelligently match JustTCG cards with TCGCSV products using:</p>
-          <ul className="list-disc list-inside ml-4 space-y-1">
-            <li>Exact number matching (highest priority)</li>
-            <li>Name similarity matching with 80%+ confidence</li>
-            <li>Set-aware matching for better accuracy</li>
-          </ul>
-          <p><strong>Tip:</strong> Use dry run first to preview matches before committing</p>
-        </CardContent>
-      </Card>
     </div>
   );
 };
