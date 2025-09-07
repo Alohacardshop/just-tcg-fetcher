@@ -75,7 +75,9 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
         const cfCacheStatus = response.headers.get('cf-cache-status') || '';
         const age = response.headers.get('age') || '';
 
-        console.log("TCGCSV groups HTTP response", { url, status, contentType, contentLength, cfCacheStatus, age });
+        let parsedAs = 'unknown';
+
+        console.log("TCGCSV groups HTTP response", { url, status, contentType, contentLength, parsedAs });
         await logToSyncLogs(supabase, operationId, 'info', `HTTP response: ${status}`, { 
           url, status, contentType, contentLength, cfCacheStatus, age 
         });
@@ -86,12 +88,16 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
             await new Promise(resolve => setTimeout(resolve, backoff));
             continue;
           }
+          // If this is the last attempt for this URL, try next URL
+          if (url !== urls[urls.length - 1]) {
+            await logToSyncLogs(supabase, operationId, 'warning', `HTTP ${response.status} for ${url}, trying next URL`);
+            break;
+          }
           throw new Error(`HTTP ${response.status}`);
         }
 
         // Try to parse JSON
         let json: any;
-        let parsedAs = 'unknown';
         
         try {
           json = await response.json();
@@ -109,6 +115,8 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
           } else {
             parsedAs = 'unknown';
           }
+          
+          console.log("Non-JSON response", { url, status, contentType, parsedAs, sampleText: text.slice(0, 100) });
           
           if (attempt < maxAttempts) {
             console.warn(`JSON parse failed (${parsedAs}) on attempt ${attempt}, retrying...`);
@@ -144,31 +152,73 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
           break;
         }
 
-        // Log parsing diagnostics
-        console.log("Envelope keys", Object.keys(json || {}));
-        console.log("Counts", {
+        // Enhanced parsing with case-insensitive handling
+        console.log('Envelope keys', Object.keys(json || {}));
+        
+        // Create lowercase version for fallback matching
+        const lower = json && typeof json === 'object'
+          ? Object.fromEntries(Object.entries(json).map(([k,v]) => [k.toLowerCase(), v]))
+          : {};
+
+        // Log diagnostic counts
+        console.log('Counts', {
           resultsCount: Array.isArray(json?.results) ? json.results.length : 0,
-          rawCount: Array.isArray(json) ? json.length : 0,
+          ResultsCount: Array.isArray(json?.Results) ? json.Results.length : 0,
           groupsCount: Array.isArray(json?.groups) ? json.groups.length : 0,
-          dataCount: Array.isArray(json?.data) ? json.data.length : 0
+          dataCount: Array.isArray(json?.data) ? json.data.length : 0,
+          lowerResults: Array.isArray(lower?.results) ? lower.results.length : 0
         });
 
-        // Primary extraction: TCGplayer-style envelope with results
+        // Enhanced group extraction with comprehensive fallbacks
         let groups: any[] = [];
         let parseSource = '';
         
-        if (Array.isArray(json?.results)) {
+        // Primary: results array (lowercase or uppercase)
+        if (Array.isArray(json?.results) && json.results.length > 0) {
           groups = json.results;
-          parseSource = 'results';
-        } else if (Array.isArray(json?.groups)) {
-          groups = json.groups;
-          parseSource = 'groups';
-        } else if (Array.isArray(json?.data)) {
-          groups = json.data;
-          parseSource = 'data';
-        } else if (Array.isArray(json)) {
+          parseSource = 'json.results';
+        } else if (Array.isArray(json?.Results) && json.Results.length > 0) {
+          groups = json.Results;
+          parseSource = 'json.Results';
+        } else if (Array.isArray(lower?.results) && lower.results.length > 0) {
+          groups = lower.results;
+          parseSource = 'lower.results';
+        }
+        // Sometimes results can be an object with 'data' or 'groups'
+        else if (Array.isArray(json?.results?.data) && json.results.data.length > 0) {
+          groups = json.results.data;
+          parseSource = 'json.results.data';
+        } else if (Array.isArray(json?.results?.groups) && json.results.groups.length > 0) {
+          groups = json.results.groups;
+          parseSource = 'json.results.groups';
+        } else if (Array.isArray(lower?.results?.data) && lower.results.data.length > 0) {
+          groups = lower.results.data;
+          parseSource = 'lower.results.data';
+        } else if (Array.isArray(lower?.results?.groups) && lower.results.groups.length > 0) {
+          groups = lower.results.groups;
+          parseSource = 'lower.results.groups';
+        }
+        // Fallbacks: top-level arrays or common container keys
+        else if (Array.isArray(json) && json.length > 0) {
           groups = json;
           parseSource = 'bare_array';
+        } else if (Array.isArray(json?.groups) && json.groups.length > 0) {
+          groups = json.groups;
+          parseSource = 'json.groups';
+        } else if (Array.isArray(json?.data) && json.data.length > 0) {
+          groups = json.data;
+          parseSource = 'json.data';
+        } else if (Array.isArray(lower?.groups) && lower.groups.length > 0) {
+          groups = lower.groups;
+          parseSource = 'lower.groups';
+        } else if (Array.isArray(lower?.data) && lower.data.length > 0) {
+          groups = lower.data;
+          parseSource = 'lower.data';
+        }
+
+        // Final safety check
+        if (!Array.isArray(groups)) {
+          groups = [];
         }
 
         await logToSyncLogs(supabase, operationId, 'info', `Parsed groups from ${parseSource}`, {
@@ -181,7 +231,7 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
         // Log sample group for debugging
         if (Array.isArray(groups) && groups[0]) {
           const sampleKeys = Object.keys(groups[0]).slice(0, 10);
-          console.log("Sample group keys", sampleKeys);
+          console.log('Sample group keys', sampleKeys);
           await logToSyncLogs(supabase, operationId, 'info', 'Sample group structure', { 
             sampleKeys,
             firstGroup: groups[0],
@@ -189,31 +239,34 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
           });
         }
 
-        // Normalize groups - filter and map only valid items
+        // Enhanced normalization with better field extraction
         const normalized: any[] = [];
         let skipped = 0;
         
         if (Array.isArray(groups)) {
           for (const g of groups) {
             // Skip items missing required fields
-            if (!g?.groupId && !g?.id) {
-              skipped++;
-              continue;
-            }
-            if (!g?.name && !g?.displayName) {
+            const groupId = g?.groupId ?? g?.id;
+            const name = g?.name ?? g?.displayName ?? g?.seoName;
+            
+            if (!groupId || !name) {
               skipped++;
               continue;
             }
             
             const normalizedGroup = {
-              group_id: Number(g.groupId ?? g.id),
+              group_id: Number(groupId),
               category_id: categoryId,
-              name: String(g.name ?? g.displayName ?? "Unknown"),
+              name: String(name),
               abbreviation: g.abbreviation ?? null,
               release_date: g.releaseDate ? new Date(g.releaseDate).toISOString() : null,
               is_supplemental: g.isSupplemental ?? null,
               sealed_product: g.sealedProduct ?? null,
-              url_slug: g.slug ?? generateSlug(g.name ?? g.displayName),
+              url_slug: g.slug ?? String(name)
+                .toLowerCase()
+                .trim()
+                .replace(/\s+/g, '-')
+                .replace(/[^a-z0-9-]/g, ''),
               updated_at: new Date().toISOString()
             };
             
@@ -236,7 +289,8 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
             groups: [], 
             groupsCount: 0, 
             skipped,
-            note: `No groups found for category ${categoryId}` 
+            note: `No groups returned for category ${categoryId}`,
+            parseSource
           };
         }
 
@@ -246,7 +300,8 @@ async function fetchAndNormalizeGroups(categoryId: number, operationId: string, 
           groups: normalized, 
           groupsCount: normalized.length, 
           skipped,
-          url // Include which URL worked
+          url, // Include which URL worked
+          parseSource // Include which parsing path worked
         };
 
       } catch (error: any) {

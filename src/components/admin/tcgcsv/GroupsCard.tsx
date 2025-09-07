@@ -51,8 +51,10 @@ export const GroupsCard = () => {
         categoryId: Number(selectedCategoryId) 
       }, { suppressToast: true });
       
-      const arr = Array.isArray(result?.groups) ? result.groups : [];
-      const count = Number.isFinite(result?.groupsCount) ? result.groupsCount : arr.length;
+      // Robust count calculation
+      const count = Number.isFinite(result?.groupsCount) ? 
+        result.groupsCount : 
+        (Array.isArray(result?.groups) ? result.groups.length : 0);
 
       if (!result?.success) {
         let description = `Error: ${result?.error || 'Unknown error'}`;
@@ -82,9 +84,11 @@ export const GroupsCard = () => {
       } else {
         const skippedText = result?.skipped ? ` (${result.skipped} skipped)` : '';
         const urlText = result?.url ? ` from ${new URL(result.url).pathname}` : '';
+        const parseText = result?.parseSource ? ` via ${result.parseSource}` : '';
+        
         toast({ 
           title: "Groups synced successfully", 
-          description: `Synced ${count} groups${skippedText}${urlText}` 
+          description: `Synced ${count} groups${skippedText}${urlText}${parseText}` 
         });
         
         // Refresh the groups list
