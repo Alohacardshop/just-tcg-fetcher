@@ -26,6 +26,14 @@ const Index = () => {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
+  
+  // Controlled tab with localStorage persistence
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('index-active-tab') || 'overview';
+    }
+    return 'overview';
+  });
 
   const { user, loading: authLoading } = useAuth();
   const { toast } = useToast();
@@ -83,6 +91,9 @@ const Index = () => {
     setSelectedGame(game);
     loadSets(game.id);
     setCurrentView('sets');
+    // Keep tab on games when navigating to sets view
+    setActiveTab('games');
+    localStorage.setItem('index-active-tab', 'games');
   };
 
   const handleViewCards = (setId: string) => {
@@ -140,11 +151,15 @@ const Index = () => {
     setCurrentView('dashboard');
     setSelectedGame(null);
     setSelectedSet(null);
+    setActiveTab('overview');
+    localStorage.setItem('index-active-tab', 'overview');
   };
 
   const handleBackToGames = () => {
     setCurrentView('games');
     setSelectedSet(null);
+    setActiveTab('games');
+    localStorage.setItem('index-active-tab', 'games');
   };
 
   const renderBreadcrumb = () => {
@@ -196,13 +211,22 @@ const Index = () => {
         {renderBreadcrumb()}
         
         {currentView === 'dashboard' && (
-          <Tabs defaultValue="overview" className="space-y-6">
+          <Tabs value={activeTab} onValueChange={(value) => {
+            if (value === 'games') {
+              setCurrentView('games');
+              setActiveTab('games');
+              localStorage.setItem('index-active-tab', 'games');
+            } else {
+              setActiveTab(value);
+              localStorage.setItem('index-active-tab', value);
+            }
+          }} className="space-y-6">
             <TabsList className="grid w-full grid-cols-5 bg-card border border-border">
               <TabsTrigger value="overview" className="flex items-center gap-2">
                 <Database className="h-4 w-4" />
                 Overview
               </TabsTrigger>
-              <TabsTrigger value="games" className="flex items-center gap-2" onClick={() => setCurrentView('games')}>
+              <TabsTrigger value="games" className="flex items-center gap-2">
                 <Search className="h-4 w-4" />
                 Browse Games
               </TabsTrigger>
@@ -251,7 +275,11 @@ const Index = () => {
                   <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Button 
-                      onClick={() => setCurrentView('games')}
+                      onClick={() => {
+                        setCurrentView('games');
+                        setActiveTab('games');
+                        localStorage.setItem('index-active-tab', 'games');
+                      }}
                       className="bg-primary/10 text-primary hover:bg-primary hover:text-primary-foreground border border-primary/20 justify-start"
                     >
                       <Database className="h-5 w-5 mr-2" />

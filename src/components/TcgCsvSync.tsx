@@ -42,8 +42,18 @@ interface MatchResult {
 }
 
 export function TcgCsvSync() {
-  const [selectedGameSlug, setSelectedGameSlug] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<string>('download');
+  const [selectedGameSlug, setSelectedGameSlug] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('tcgcsv-selected-game') || '';
+    }
+    return '';
+  });
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('tcgcsv-active-tab') || 'download';
+    }
+    return 'download';
+  });
   const [dryRun, setDryRun] = useState(true);
   const [forceUpdate, setForceUpdate] = useState(false);
   const [wipeBefore, setWipeBefore] = useState(false);
@@ -224,7 +234,10 @@ export function TcgCsvSync() {
           {/* Game Selection */}
           <div className="space-y-2">
             <label className="text-sm font-medium">Select Game</label>
-            <Select value={selectedGameSlug} onValueChange={setSelectedGameSlug}>
+            <Select value={selectedGameSlug} onValueChange={(value) => {
+              setSelectedGameSlug(value);
+              localStorage.setItem('tcgcsv-selected-game', value);
+            }}>
               <SelectTrigger>
                 <SelectValue placeholder="Choose a game to sync..." />
               </SelectTrigger>
@@ -276,7 +289,10 @@ export function TcgCsvSync() {
           )}
 
           {/* 3-Step Workflow Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <Tabs value={activeTab} onValueChange={(value) => {
+            setActiveTab(value);
+            localStorage.setItem('tcgcsv-active-tab', value);
+          }} className="w-full">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="download" className="flex items-center gap-2">
                 <Download className="h-4 w-4" />
