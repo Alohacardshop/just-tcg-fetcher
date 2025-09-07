@@ -98,31 +98,42 @@ export const TcgCsvSyncV2 = () => {
       
       if (categoriesError) throw categoriesError;
 
-      // Get groups count for each category
-      const { data: groupsData, error: groupsError } = await supabase
-        .from('tcgcsv_groups')
-        .select('tcgcsv_category_id');
-        
-      if (groupsError) throw groupsError;
+      // Compute counts per category using HEAD requests to avoid row limits
+      const categoryIds = categoriesData?.map(c => c.category_id) || [];
 
-      // Get products count for each category  
-      const { data: productsData, error: productsError } = await supabase
-        .from('tcgcsv_products')
-        .select('category_id');
-        
-      if (productsError) throw productsError;
+      // Fetch counts in parallel per category
+      const groupCountsEntries = await Promise.all(
+        categoryIds.map(async (id) => {
+          const { count, error } = await supabase
+            .from('tcgcsv_groups')
+            .select('group_id', { count: 'exact', head: true })
+            .eq('tcgcsv_category_id', id);
+          if (error) {
+            console.error('Groups count error for category', id, error);
+            return [id, 0] as [string, number];
+          }
+          return [id, count || 0] as [string, number];
+        })
+      );
 
-      // Count groups and products per category
-      const groupCounts = groupsData?.reduce((acc, group) => {
-        acc[group.tcgcsv_category_id] = (acc[group.tcgcsv_category_id] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>) || {};
+      const productCountsEntries = await Promise.all(
+        categoryIds.map(async (id) => {
+          const { count, error } = await supabase
+            .from('tcgcsv_products')
+            .select('product_id', { count: 'exact', head: true })
+            .eq('category_id', id);
+          if (error) {
+            console.error('Products count error for category', id, error);
+            return [id, 0] as [string, number];
+          }
+          return [id, count || 0] as [string, number];
+        })
+      );
 
-      const productCounts = productsData?.reduce((acc, product) => {
-        acc[product.category_id] = (acc[product.category_id] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>) || {};
+      // Build counts dictionaries from entries
+      const groupCounts = Object.fromEntries(groupCountsEntries) as Record<string, number>;
 
+      const productCounts = Object.fromEntries(productCountsEntries) as Record<string, number>;
       // Combine data with stats
       return categoriesData?.map(category => ({
         ...category,
