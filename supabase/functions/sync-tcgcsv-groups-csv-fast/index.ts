@@ -24,6 +24,64 @@ function json(body: unknown, status = 200, req?: Request) {
   });
 }
 
+const TCGCSV_BASE = 'https://tcgcsv.com/tcgplayer';
+
+type FetchKind = 'csv' | 'json';
+
+const CASE_VARIANTS = {
+  groups: (categoryId: number) => [
+    `${TCGCSV_BASE}/${categoryId}/Groups.csv`, // preferred
+    `${TCGCSV_BASE}/${categoryId}/groups.csv`, // lowercase fallback
+  ]
+};
+
+async function fetchCsvWithFallback(kind: 'groups', id: number) {
+  const headers = {
+    'Accept': 'text/csv, */*',
+    'Cache-Control': 'no-cache',
+    'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)',
+    'Referer': 'https://tcgcsv.com/'
+  };
+  const variants = CASE_VARIANTS[kind](id);
+
+  // Try CSV variants first
+  for (const url of variants) {
+    try {
+      const res = await fetch(url, { headers });
+      if (res.ok && (res.headers.get('content-type') || '').includes('text/csv')) {
+        return { kind: 'csv' as FetchKind, url, res };
+      }
+      if (res.status === 403 || res.status === 404) continue; // try next variant
+    } catch (e) {
+      continue; // try next variant
+    }
+  }
+
+  // Fallback to JSON API if CSV paths are blocked/unavailable
+  const jsonUrl = `${TCGCSV_BASE}/${id}/groups`;
+  try {
+    const jr = await fetch(jsonUrl, { 
+      headers: { 
+        'Accept': 'application/json', 
+        'Cache-Control': 'no-cache', 
+        'User-Agent': headers['User-Agent'] 
+      } 
+    });
+    if (jr.ok && (jr.headers.get('content-type') || '').includes('application/json')) {
+      return { kind: 'json' as FetchKind, url: jsonUrl, res: jr };
+    }
+  } catch (e) {
+    // JSON fallback failed too
+  }
+
+  // Surface a helpful error payload
+  return { 
+    kind: 'csv' as FetchKind, 
+    url: variants[0], 
+    res: new Response(null, { status: 502, statusText: 'CSV_AND_JSON_UNAVAILABLE' }) 
+  };
+}
+
 const toBool = (v: any) =>
   typeof v === 'boolean' ? v :
   v == null ? null :
@@ -50,12 +108,12 @@ class StreamingCSVParser {
       if (!line.trim()) continue;
       
       if (!this.headersParsed) {
-        this.headers = line.split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+        this.headers = line.split(',').map(h => h.trim().toLowerCase().replace(/\"/g, ''));
         this.headersParsed = true;
         continue;
       }
       
-      const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
+      const cols = line.split(',').map(c => c.trim().replace(/\"/g, ''));
       const row: any = {};
       
       for (let i = 0; i < this.headers.length && i < cols.length; i++) {
@@ -81,159 +139,162 @@ class StreamingCSVParser {
   }
 }
 
-async function fetchAndParseGroups(categoryId: number, operationId: string, supabase: any) {
-  const url = `https://tcgcsv.com/tcgplayer/${categoryId}/groups.csv`;
+function processGroupRow(row: any, categoryId: number): any | null {
+  const groupIdCol = Object.keys(row).find(k => 
+    k.includes('groupid') || k.includes('group_id')
+  );
+  const nameCol = Object.keys(row).find(k => 
+    k.includes('groupname') || k.includes('name')
+  );
+  
+  if (!groupIdCol || !nameCol) {
+    return null;
+  }
+  
+  const groupId = Number(row[groupIdCol]);
+  const name = row[nameCol];
+  
+  if (!Number.isFinite(groupId) || !name) {
+    return null;
+  }
+  
+  const abbreviationCol = Object.keys(row).find(k => 
+    k.includes('abbreviation')
+  );
+  const releaseDateCol = Object.keys(row).find(k => 
+    k.includes('releasedate') || k.includes('release_date')
+  );
+  const sealedProductCol = Object.keys(row).find(k => 
+    k.includes('sealedproduct') || k.includes('sealed_product')
+  );
+  const isSupplementalCol = Object.keys(row).find(k => 
+    k.includes('issupplemental') || k.includes('is_supplemental')
+  );
+  const popularityCol = Object.keys(row).find(k => 
+    k.includes('popularity')
+  );
+  const slugCol = Object.keys(row).find(k => 
+    k.includes('slug')
+  );
+  
+  return {
+    group_id: groupId,
+    category_id: categoryId,
+    name: name,
+    abbreviation: abbreviationCol ? row[abbreviationCol] || null : null,
+    release_date: releaseDateCol ? row[releaseDateCol] || null : null,
+    is_supplemental: isSupplementalCol ? toBool(row[isSupplementalCol]) : null,
+    sealed_product: sealedProductCol ? toBool(row[sealedProductCol]) : null,
+    popularity: popularityCol ? Number(row[popularityCol]) || null : null,
+    url_slug: slugCol ? row[slugCol] || kebab(name) : kebab(name),
+    updated_at: new Date().toISOString()
+  };
+}
+
+async function fetchAndParseGroups(categoryId: number, operationId: string) {
   const startTime = Date.now();
   
   try {
-    console.log(`[${operationId}] Starting high-throughput groups fetch for category ${categoryId}`);
+    console.log(`[${operationId}] Starting groups fetch for category ${categoryId}`);
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/csv, */*',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)'
-      },
-      signal: controller.signal
-    });
+    const { kind, url, res } = await fetchCsvWithFallback('groups', categoryId);
     
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      if (response.status === 403) {
+    console.log(`[${operationId}] Fetch result: kind=${kind}, url=${url}, status=${res.status}`);
+    
+    if (!res.ok) {
+      if (res.status === 403) {
         return {
           success: false,
+          categoryId,
           error: 'CSV_ACCESS_FORBIDDEN',
-          summary: { fetched: 0, upserted: 0, skipped: 0 },
-          note: `Groups CSV for category ${categoryId} returned 403 Forbidden`
+          hint: { 
+            code: 'HTTP_403', 
+            sample: 'Access forbidden. Tried both Groups.csv and groups.csv variants.',
+            headers: Object.fromEntries([...res.headers.entries()].slice(0, 5))
+          }
         };
       }
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (res.status === 502 && res.statusText === 'CSV_AND_JSON_UNAVAILABLE') {
+        return {
+          success: false,
+          categoryId,
+          error: 'CSV_AND_JSON_UNAVAILABLE',
+          hint: { code: 'BOTH_UNAVAILABLE', sample: 'Neither CSV nor JSON endpoints accessible' }
+        };
+      }
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
 
-    const contentLength = response.headers.get('content-length');
-    console.log(`[${operationId}] Response received: ${response.status}, Content-Length: ${contentLength}`);
+    const contentLength = res.headers.get('content-length');
+    console.log(`[${operationId}] Response received: ${res.status}, Content-Length: ${contentLength}, Kind: ${kind}`);
 
-    const parser = new StreamingCSVParser();
     const normalized: any[] = [];
     let skipped = 0;
     
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Failed to get response reader');
-    
-    const decoder = new TextDecoder();
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    if (kind === 'csv') {
+      // Stream parse CSV
+      const parser = new StreamingCSVParser();
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('Failed to get response reader');
       
-      const chunk = decoder.decode(value, { stream: true });
-      const rows = parser.parseChunk(chunk);
+      const decoder = new TextDecoder();
       
-      for (const row of rows) {
-        const groupIdCol = Object.keys(row).find(k => 
-          k.includes('groupid') || k.includes('group_id')
-        );
-        const nameCol = Object.keys(row).find(k => 
-          k.includes('groupname') || k.includes('name')
-        );
-        const abbreviationCol = Object.keys(row).find(k => 
-          k.includes('abbreviation')
-        );
-        const releaseDateCol = Object.keys(row).find(k => 
-          k.includes('releasedate') || k.includes('release_date')
-        );
-        const isSupplementalCol = Object.keys(row).find(k => 
-          k.includes('issupplemental') || k.includes('is_supplemental')
-        );
-        const sealedProductCol = Object.keys(row).find(k => 
-          k.includes('sealedproduct') || k.includes('sealed_product')
-        );
-        const popularityCol = Object.keys(row).find(k => 
-          k.includes('popularity')
-        );
-        const slugCol = Object.keys(row).find(k => 
-          k.includes('slug')
-        );
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
         
-        if (!groupIdCol || !nameCol) {
-          skipped++;
-          continue;
+        const chunk = decoder.decode(value, { stream: true });
+        const rows = parser.parseChunk(chunk);
+        
+        for (const row of rows) {
+          const processedRow = processGroupRow(row, categoryId);
+          if (processedRow) {
+            normalized.push(processedRow);
+          } else {
+            skipped++;
+          }
         }
-        
-        const groupId = Number(row[groupIdCol]);
-        const name = row[nameCol];
-        
-        if (!Number.isFinite(groupId) || !name) {
-          skipped++;
-          continue;
-        }
-        
-        normalized.push({
-          group_id: groupId,
-          category_id: categoryId,
-          name: name,
-          abbreviation: abbreviationCol ? row[abbreviationCol] || null : null,
-          release_date: releaseDateCol ? row[releaseDateCol] || null : null,
-          is_supplemental: isSupplementalCol ? toBool(row[isSupplementalCol]) : null,
-          sealed_product: sealedProductCol ? toBool(row[sealedProductCol]) : null,
-          popularity: popularityCol ? Number(row[popularityCol]) || null : null,
-          url_slug: slugCol ? row[slugCol] || kebab(name) : kebab(name),
-          updated_at: new Date().toISOString()
-        });
       }
-    }
-    
-    const finalRows = parser.finalize();
-    for (const row of finalRows) {
-      const groupIdCol = Object.keys(row).find(k => 
-        k.includes('groupid') || k.includes('group_id')
-      );
-      const nameCol = Object.keys(row).find(k => 
-        k.includes('groupname') || k.includes('name')
-      );
       
-      if (groupIdCol && nameCol) {
-        const groupId = Number(row[groupIdCol]);
-        const name = row[nameCol];
-        
-        if (Number.isFinite(groupId) && name) {
-          normalized.push({
-            group_id: groupId,
-            category_id: categoryId,
-            name: name,
-            abbreviation: null,
-            release_date: null,
-            is_supplemental: null,
-            sealed_product: null,
-            popularity: null,
-            url_slug: kebab(name),
-            updated_at: new Date().toISOString()
-          });
+      // Process any remaining data
+      const finalRows = parser.finalize();
+      for (const row of finalRows) {
+        const processedRow = processGroupRow(row, categoryId);
+        if (processedRow) {
+          normalized.push(processedRow);
         } else {
           skipped++;
         }
-      } else {
-        skipped++;
+      }
+    } else {
+      // Parse JSON
+      const jsonData = await res.json();
+      const rows = Array.isArray(jsonData) ? jsonData : jsonData?.results ?? [];
+      
+      for (const row of rows) {
+        const processedRow = processGroupRow(row, categoryId);
+        if (processedRow) {
+          normalized.push(processedRow);
+        } else {
+          skipped++;
+        }
       }
     }
     
     const totalTime = Date.now() - startTime;
     const rateRPS = normalized.length > 0 ? Math.round((normalized.length / totalTime) * 1000) : 0;
     
-    console.log(`[${operationId}] Parsed ${normalized.length} groups in ${totalTime}ms (${rateRPS} rows/sec), skipped ${skipped}`);
+    console.log(`[${operationId}] Parsed ${normalized.length} groups in ${totalTime}ms (${rateRPS} rows/sec), skipped ${skipped}, used ${kind} source`);
     
     return {
       success: true,
+      categoryId,
       groups: normalized,
+      usedFallback: kind === 'json',
+      sourceUrl: url,
       summary: {
-        fetched: parser.getRowCount(),
-        upserted: 0,
+        fetched: normalized.length + skipped,
+        upserted: 0, // Will be set after DB operation
         skipped,
         rateRPS
       }
@@ -277,7 +338,7 @@ async function batchUpsertGroups(groups: any[], operationId: string, supabase: a
         
         totalUpserted += batch.length;
         console.log(`[${operationId}] Upserted batch ${Math.floor(i/batchSize) + 1}: ${batch.length} groups`);
-        break;
+        break; // Success, exit retry loop
         
       } catch (error: any) {
         retries++;
@@ -315,18 +376,17 @@ serve(async (req) => {
   try {
     const { categoryId } = await req.json();
     
-    if (!categoryId || !Number.isInteger(categoryId)) {
+    if (!Number.isFinite(categoryId)) {
       return json({
         success: false,
-        categoryId: categoryId || null,
-        summary: { fetched: 0, upserted: 0, skipped: 0 },
-        error: "categoryId is required and must be an integer"
+        error: 'INVALID_CATEGORY_ID',
+        hint: { code: 'VALIDATION_ERROR', sample: 'categoryId must be a finite number' }
       }, 400, req);
     }
 
     console.log(`[${operationId}] Starting TCGCSV groups fast CSV sync for category ${categoryId}`);
 
-    const result = await fetchAndParseGroups(categoryId, operationId, supabase);
+    const result = await fetchAndParseGroups(categoryId, operationId);
     
     if (!result.success) {
       return json({
@@ -334,9 +394,9 @@ serve(async (req) => {
         categoryId,
         summary: { fetched: 0, upserted: 0, skipped: 0 },
         error: result.error,
-        note: result.note,
+        hint: result.hint,
         operationId
-      }, 500, req);
+      }, 200, req);
     }
     
     const { upserted, rateUPS } = await batchUpsertGroups(result.groups, operationId, supabase);
@@ -346,6 +406,9 @@ serve(async (req) => {
     return json({
       success: true,
       categoryId,
+      groupsCount: upserted,
+      usedFallback: result.usedFallback,
+      sourceUrl: result.sourceUrl,
       summary: {
         fetched: result.summary.fetched,
         upserted,
@@ -361,7 +424,6 @@ serve(async (req) => {
 
     return json({
       success: false,
-      categoryId: null,
       summary: { fetched: 0, upserted: 0, skipped: 0 },
       error: error?.message || "Unknown error",
       operationId

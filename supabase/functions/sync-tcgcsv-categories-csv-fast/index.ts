@@ -78,7 +78,7 @@ class StreamingCSVParser {
 }
 
 async function fetchAndParseCategories(operationId: string, supabase: any) {
-  const url = 'https://tcgcsv.com/tcgplayer/categories.csv';
+  const url = 'https://tcgcsv.com/tcgplayer/Categories.csv'; // NOTE: capital C
   const startTime = Date.now();
   
   try {

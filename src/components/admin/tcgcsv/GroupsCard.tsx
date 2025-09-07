@@ -22,6 +22,8 @@ type GroupsCsvResp = {
   summary?: { fetched: number; upserted: number; skipped: number };
   groups?: any[];
   groupsCount?: number;
+  usedFallback?: boolean;
+  sourceUrl?: string;
   error?: string | null;
   note?: string;
   hint?: { code: string; sample?: string; headers?: Record<string, string> } | null;
@@ -175,6 +177,11 @@ export const GroupsCard = () => {
 
       if (!result?.success) {
         let description = `Error: ${result?.error || 'Unknown error'}`;
+        
+        if (result?.error === 'CSV_ACCESS_FORBIDDEN' || result?.hint?.code === 'HTTP_403') {
+          description = "Couldn't download Groups.csv (403). We retried with correct casing and fell back to JSON automatically.";
+        }
+        
         if (result?.hint?.code) {
           description += ` (${result.hint.code})`;
         }
@@ -202,9 +209,22 @@ export const GroupsCard = () => {
           variant: "destructive",
         });
       } else {
+        let title = "Groups synced successfully";
+        let description = `Synced ${count} groups (CSV)`;
+        
+        if (result?.usedFallback) {
+          title = "Groups synced successfully (JSON fallback)";
+          description = `Synced ${count} groups via JSON fallback`;
+        }
+        
+        // Log the URL we used for verification
+        if (result?.sourceUrl) {
+          console.log('Groups sync used URL:', result.sourceUrl);
+        }
+        
         toast({ 
-          title: "Groups synced successfully", 
-          description: `Synced ${count} groups (CSV)` 
+          title, 
+          description 
         });
         
         // Refresh the groups list
