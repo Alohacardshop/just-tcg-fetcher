@@ -38,14 +38,20 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
         .select('group_id')
         .eq('tcgcsv_category_id', selectedCategoryId);
 
-      console.log('Groups query result:', { groups, groupsError, selectedCategoryId });
+      if (groupsError) {
+        console.error('Groups query error:', groupsError);
+        throw groupsError;
+      }
 
       const { data: products, error: productsError } = await supabase
         .from('tcgcsv_products')
         .select('product_id')
         .eq('category_id', selectedCategoryId);
 
-      console.log('Products query result:', { products, productsError, selectedCategoryId });
+      if (productsError) {
+        console.error('Products query error:', productsError);
+        throw productsError;
+      }
 
       return {
         groupsCount: groups?.length || 0, // Sets

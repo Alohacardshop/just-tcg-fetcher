@@ -24,16 +24,16 @@ export const GroupSelector = ({ selectedCategoryId }: GroupSelectorProps) => {
       
       const { data, error } = await supabase
         .from('tcgcsv_groups')
-        .select('*')
+        .select('group_id, name, release_date, data')
         .eq('tcgcsv_category_id', selectedCategoryId)
         .order('name');
       
-      console.log('Groups fetch result:', { data, error, selectedCategoryId });
-      
       if (error) {
-        console.error('Error fetching groups:', error);
+        console.error('Groups fetch error:', error);
         return [];
       }
+      
+      console.log(`Found ${data?.length || 0} groups for category ${selectedCategoryId}`);
       return data || [];
     },
     enabled: !!selectedCategoryId,
