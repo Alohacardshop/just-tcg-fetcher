@@ -12,6 +12,7 @@ import { useSyncLogs } from "@/hooks/useSyncStatus";
 import { Search, RefreshCw, Download, Zap, Activity, Clock, Route } from 'lucide-react';
 import { TcgCsvGuidedPanel } from './TcgCsvGuidedPanel';
 import { SetMappingPanel } from './SetMappingPanel';
+import { GroupSelector } from './GroupSelector';
 
 interface Game {
   id: string;
@@ -367,6 +368,7 @@ export const TcgCsvSyncV2 = () => {
                 selectedCategoryId={selectedCategoryId}
                 onSelectCategory={setSelectedCategoryId}
               />
+              <GroupSelector selectedCategoryId={selectedCategoryId} />
             </TabsContent>
 
             <TabsContent value="mapping" className="space-y-4">

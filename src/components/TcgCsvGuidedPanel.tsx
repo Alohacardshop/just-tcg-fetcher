@@ -33,15 +33,19 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
     queryFn: async () => {
       if (!selectedCategoryId) return null;
 
-      const { data: groups } = await supabase
+      const { data: groups, error: groupsError } = await supabase
         .from('tcgcsv_groups')
         .select('group_id')
         .eq('tcgcsv_category_id', selectedCategoryId);
 
-      const { data: products } = await supabase
+      console.log('Groups query result:', { groups, groupsError, selectedCategoryId });
+
+      const { data: products, error: productsError } = await supabase
         .from('tcgcsv_products')
         .select('product_id')
         .eq('category_id', selectedCategoryId);
+
+      console.log('Products query result:', { products, productsError, selectedCategoryId });
 
       return {
         groupsCount: groups?.length || 0, // Sets
