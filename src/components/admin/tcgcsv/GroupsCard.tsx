@@ -80,10 +80,9 @@ export const GroupsCard = () => {
         timestamp: new Date().toISOString() 
       });
 
-      // Use sync-tcgcsv-groups-csv-fast function, fall back to sync-tcgcsv-groups-csv if not available
-      let functionName = 'sync-tcgcsv-groups-csv-fast';
+      // Use the working sync-tcgcsv-groups-csv function directly
       const { data: result, error: invokeFnError, status } = await invokeFn<GroupsCsvResp>(
-        functionName,
+        'sync-tcgcsv-groups-csv',
         payload
       );
 
@@ -100,49 +99,6 @@ export const GroupsCard = () => {
       // Handle invokeFn errors
       if (invokeFnError) {
         console.error('InvokeFn error:', invokeFnError);
-        
-        // If the fast function doesn't exist, try the original function
-        if (invokeFnError.message?.includes('Failed to send a request') || 
-            invokeFnError.message?.includes('Failed to fetch')) {
-          console.log('Attempting fallback to sync-tcgcsv-groups-csv');
-          
-          const { data: fallbackResult, error: fallbackError, status: fallbackStatus } = await invokeFn<GroupsCsvResp>(
-            'sync-tcgcsv-groups-csv',
-            payload
-          );
-          
-          if (fallbackError) {
-            toast({
-              title: "Both sync functions failed", 
-              description: `Fast: ${invokeFnError.message} | Original: ${fallbackError.message}`,
-              variant: "destructive",
-            });
-            return;
-          }
-          
-          // Use fallback result
-          setLastResponse(fallbackResult);
-          console.log('Fallback function succeeded:', fallbackResult);
-          
-          // Continue with fallback result processing
-          if (fallbackResult?.success) {
-            const count = Number.isFinite(fallbackResult?.groupsCount) ? 
-              fallbackResult.groupsCount : 
-              Number.isFinite(fallbackResult?.summary?.upserted) ?
-              fallbackResult.summary.upserted :
-              Array.isArray(fallbackResult?.groups) ? fallbackResult.groups.length : 0;
-              
-            if (count > 0) {
-              toast({ 
-                title: "Groups synced successfully (fallback)", 
-                description: `Synced ${count} groups` 
-              });
-              refetchGroups();
-            }
-          }
-          return;
-        }
-        
         toast({
           title: "Function call failed", 
           description: invokeFnError.message || "Unknown error",
