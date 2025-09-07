@@ -22,6 +22,8 @@ export const GroupSelector = ({ selectedCategoryId }: GroupSelectorProps) => {
     queryFn: async () => {
       if (!selectedCategoryId) return [];
       
+      console.log('GroupSelector fetching groups for category:', selectedCategoryId);
+      
       const { data, error } = await supabase
         .from('tcgcsv_groups')
         .select('group_id, name, release_date, data')
@@ -33,7 +35,7 @@ export const GroupSelector = ({ selectedCategoryId }: GroupSelectorProps) => {
         return [];
       }
       
-      console.log(`Found ${data?.length || 0} groups for category ${selectedCategoryId}`);
+      console.log(`GroupSelector found ${data?.length || 0} groups for category ${selectedCategoryId}:`, data?.slice(0, 3));
       return data || [];
     },
     enabled: !!selectedCategoryId,

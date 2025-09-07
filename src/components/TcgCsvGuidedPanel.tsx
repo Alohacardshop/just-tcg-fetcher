@@ -33,6 +33,8 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
     queryFn: async () => {
       if (!selectedCategoryId) return null;
 
+      console.log('Fetching stats for category:', selectedCategoryId);
+
       const { data: groups, error: groupsError } = await supabase
         .from('tcgcsv_groups')
         .select('group_id')
@@ -43,6 +45,8 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
         throw groupsError;
       }
 
+      console.log('Groups found:', groups?.length || 0);
+
       const { data: products, error: productsError } = await supabase
         .from('tcgcsv_products')
         .select('product_id')
@@ -52,6 +56,8 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
         console.error('Products query error:', productsError);
         throw productsError;
       }
+
+      console.log('Products found:', products?.length || 0);
 
       return {
         groupsCount: groups?.length || 0, // Sets
