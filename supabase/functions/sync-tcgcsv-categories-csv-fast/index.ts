@@ -158,8 +158,6 @@ async function fetchAndParseCategories(operationId: string, supabase: any) {
           tcgcsv_category_id: categoryId,
           name: name,
           display_name: displayNameCol ? row[displayNameCol] || null : null,
-          seo_category_name: seoNameCol ? row[seoNameCol] || null : null,
-          slug: kebab(name),
           updated_at: new Date().toISOString()
         });
       }
@@ -185,8 +183,6 @@ async function fetchAndParseCategories(operationId: string, supabase: any) {
             tcgcsv_category_id: categoryId,
             name: name,
             display_name: null,
-            seo_category_name: null,
-            slug: kebab(name),
             updated_at: new Date().toISOString()
           });
         } else {
