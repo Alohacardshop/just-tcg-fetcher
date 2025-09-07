@@ -72,7 +72,7 @@ async function resolveGroupIds(categoryId: number, groupNameFilters: string[] | 
 }
 
 async function fetchAndParseProducts(groupId: number, groupName: string, categoryId: number, operationId: string, supabase: any) {
-  const url = `https://tcgcsv.com/tcgplayer/groups/${groupId}/products.csv`;
+  const url = `https://tcgcsv.com/tcgplayer/${categoryId}/${groupId}/ProductsAndPrices.csv`;
   let attempt = 0;
   const maxAttempts = 3;
   
@@ -89,8 +89,8 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
         headers: {
           'Accept': 'text/csv, */*',
           'Cache-Control': 'no-cache',
-          'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)'
-        },
+          'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)',
+          'Referer': 'https://tcgcsv.com/'
         signal: controller.signal
       });
       clearTimeout(timeout);
