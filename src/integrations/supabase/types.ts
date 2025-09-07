@@ -158,6 +158,51 @@ export type Database = {
         }
         Relationships: []
       }
+      tcgcsv_jobs: {
+        Row: {
+          category_id: number
+          created_at: string
+          failed_group_ids: number[] | null
+          finished_at: string | null
+          id: string
+          job_type: string
+          last_updated: string
+          metadata: Json | null
+          started_at: string
+          succeeded_group_ids: number[] | null
+          total_groups: number
+          updated_at: string
+        }
+        Insert: {
+          category_id: number
+          created_at?: string
+          failed_group_ids?: number[] | null
+          finished_at?: string | null
+          id?: string
+          job_type: string
+          last_updated?: string
+          metadata?: Json | null
+          started_at?: string
+          succeeded_group_ids?: number[] | null
+          total_groups?: number
+          updated_at?: string
+        }
+        Update: {
+          category_id?: number
+          created_at?: string
+          failed_group_ids?: number[] | null
+          finished_at?: string | null
+          id?: string
+          job_type?: string
+          last_updated?: string
+          metadata?: Json | null
+          started_at?: string
+          succeeded_group_ids?: number[] | null
+          total_groups?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tcgcsv_products: {
         Row: {
           category_id: number

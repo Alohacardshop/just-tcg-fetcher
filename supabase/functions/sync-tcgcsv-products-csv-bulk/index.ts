@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { fetchWithRL, getConcurrency, getThrottleStats, productUrlVariants } from '../_shared/rate.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -128,64 +129,151 @@ async function fetchAndParseProducts(
   bytes: number;
   ms: number;
   error?: string;
+  retryAttempts?: number;
+  rateLimited?: boolean;
 }> {
-  const url = `https://tcgcsv.com/tcgplayer/${categoryId}/${groupId}/ProductsAndPrices.csv`;
   const startTime = Date.now();
   let bytesProcessed = 0;
+  let retryAttempts = 0;
+  let rateLimited = false;
   
   try {
     console.log(`[${operationId}] Fetching products for group ${groupId} (${groupName})`);
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Accept': 'text/csv, */*',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)',
-        'Referer': 'https://tcgcsv.com/'
-      },
-      signal: controller.signal
-    });
+    // Try URL variants with rate limiting
+    const urls = productUrlVariants(categoryId, groupId);
+    let lastError = '';
     
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      return {
-        success: false,
-        groupId,
-        groupName,
-        fetched: 0,
-        upserted: 0,
-        skipped: 0,
-        bytes: 0,
-        ms: Date.now() - startTime,
-        error: `HTTP ${response.status}`
-      };
-    }
-
-    const parser = new StreamingCSVParser();
-    const normalized: any[] = [];
-    let skipped = 0;
-    
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Failed to get response reader');
-    
-    const decoder = new TextDecoder();
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    for (const url of urls) {
+      const { res, attempt, retryAfter } = await fetchWithRL(url);
+      retryAttempts = Math.max(retryAttempts, attempt);
       
-      bytesProcessed += value.length;
-      const chunk = decoder.decode(value, { stream: true });
-      const rows = parser.parseChunk(chunk);
+      if (retryAfter) rateLimited = true;
       
-      for (const row of rows) {
-        // Normalize header names for better matching
+      if (res.status === 503 && res.statusText === 'CIRCUIT_OPEN') {
+        return {
+          success: false,
+          groupId,
+          groupName,
+          fetched: 0,
+          upserted: 0,
+          skipped: 0,
+          bytes: 0,
+          ms: Date.now() - startTime,
+          error: 'CIRCUIT_OPEN',
+          retryAttempts,
+          rateLimited
+        };
+      }
+
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}`;
+        if (res.status === 429) rateLimited = true;
+        continue; // Try next URL variant
+      }
+
+      // Parse successful response
+      const parser = new StreamingCSVParser();
+      const normalized: any[] = [];
+      let skipped = 0;
+      
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('Failed to get response reader');
+      
+      const decoder = new TextDecoder();
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        bytesProcessed += value.length;
+        const chunk = decoder.decode(value, { stream: true });
+        const rows = parser.parseChunk(chunk);
+        
+        for (const row of rows) {
+          // Normalize header names for better matching
+          const normalizedRow: any = {};
+          Object.keys(row).forEach(key => {
+            const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+            normalizedRow[normalizedKey] = row[key];
+          });
+
+          const productIdCol = Object.keys(normalizedRow).find(k => 
+            k === 'productid' || k === 'id'
+          );
+          const nameCol = Object.keys(normalizedRow).find(k => 
+            k === 'name' || k === 'cleanname' || k === 'productname'
+          );
+          const numberCol = Object.keys(normalizedRow).find(k => 
+            k.includes('number') || k === 'extnumber'
+          );
+          const rarityCol = Object.keys(normalizedRow).find(k => 
+            k.includes('rarity') || k === 'extrarity'
+          );
+          const productTypeCol = Object.keys(normalizedRow).find(k => 
+            k.includes('producttype') || k.includes('type') || k === 'extcardtype'
+          );
+          const slugCol = Object.keys(normalizedRow).find(k => 
+            k.includes('slug')
+          );
+          
+          if (!productIdCol || !nameCol) {
+            skipped++;
+            continue;
+          }
+          
+          const productId = Number(normalizedRow[productIdCol]);
+          const name = normalizedRow[nameCol];
+          const productType = productTypeCol ? normalizedRow[productTypeCol] : null;
+          
+          if (!Number.isFinite(productId) || !name) {
+            skipped++;
+            continue;
+          }
+          
+          // Apply product type filters
+          if (!includeSealed && productType && 
+              productType.toLowerCase().includes('sealed')) {
+            skipped++;
+            continue;
+          }
+          
+          if (!includeSingles && productType && 
+              (productType.toLowerCase().includes('card') || 
+               productType.toLowerCase().includes('single'))) {
+            skipped++;
+            continue;
+          }
+          
+          // Build extended_data object from all additional columns  
+          const extendedData: any = {};
+          Object.keys(row).forEach(key => {
+            const value = row[key];
+            if (value && key !== productIdCol && key !== nameCol && key !== numberCol && key !== rarityCol && key !== productTypeCol && key !== slugCol) {
+              extendedData[key] = value;
+            }
+          });
+
+          normalized.push({
+            product_id: productId,
+            group_id: groupId,
+            category_id: categoryId,
+            name: name,
+            clean_name: name.toLowerCase().trim(),
+            number: numberCol ? normalizedRow[numberCol] || null : null,
+            rarity: rarityCol ? normalizedRow[rarityCol] || null : null,
+            product_type: productType,
+            url_slug: slugCol ? normalizedRow[slugCol] || kebab(name) : kebab(name),
+            extended_data: Object.keys(extendedData).length > 0 ? extendedData : null,
+            updated_at: new Date().toISOString()
+          });
+        }
+      }
+      
+      // Process any remaining data
+      const finalRows = parser.finalize();
+      for (const row of finalRows) {
+        // Same normalization as above
         const normalizedRow: any = {};
         Object.keys(row).forEach(key => {
           const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -198,134 +286,70 @@ async function fetchAndParseProducts(
         const nameCol = Object.keys(normalizedRow).find(k => 
           k === 'name' || k === 'cleanname' || k === 'productname'
         );
-        const numberCol = Object.keys(normalizedRow).find(k => 
-          k.includes('number') || k === 'extnumber'
-        );
-        const rarityCol = Object.keys(normalizedRow).find(k => 
-          k.includes('rarity') || k === 'extrarity'
-        );
-        const productTypeCol = Object.keys(normalizedRow).find(k => 
-          k.includes('producttype') || k.includes('type') || k === 'extcardtype'
-        );
-        const slugCol = Object.keys(normalizedRow).find(k => 
-          k.includes('slug')
-        );
         
-        if (!productIdCol || !nameCol) {
-          skipped++;
-          continue;
-        }
-        
-        const productId = Number(normalizedRow[productIdCol]);
-        const name = normalizedRow[nameCol];
-        const productType = productTypeCol ? normalizedRow[productTypeCol] : null;
-        
-        if (!Number.isFinite(productId) || !name) {
-          skipped++;
-          continue;
-        }
-        
-        // Apply product type filters
-        if (!includeSealed && productType && 
-            productType.toLowerCase().includes('sealed')) {
-          skipped++;
-          continue;
-        }
-        
-        if (!includeSingles && productType && 
-            (productType.toLowerCase().includes('card') || 
-             productType.toLowerCase().includes('single'))) {
-          skipped++;
-          continue;
-        }
-        
-        // Build extended_data object from all additional columns  
-        const extendedData: any = {};
-        Object.keys(row).forEach(key => {
-          const value = row[key];
-          if (value && key !== productIdCol && key !== nameCol && key !== numberCol && key !== rarityCol && key !== productTypeCol && key !== slugCol) {
-            extendedData[key] = value;
+        if (productIdCol && nameCol) {
+          const productId = Number(normalizedRow[productIdCol]);
+          const name = normalizedRow[nameCol];
+          
+          if (Number.isFinite(productId) && name) {
+            // Build extended_data from original row
+            const extendedData: any = {};
+            Object.keys(row).forEach(key => {
+              const value = row[key];
+              if (value && key !== productIdCol && key !== nameCol) {
+                extendedData[key] = value;
+              }
+            });
+
+            normalized.push({
+              product_id: productId,
+              group_id: groupId,
+              category_id: categoryId,
+              name: name,
+              clean_name: name.toLowerCase().trim(),
+              number: null,
+              rarity: null,
+              product_type: null,
+              url_slug: kebab(name),
+              extended_data: Object.keys(extendedData).length > 0 ? extendedData : null,
+              updated_at: new Date().toISOString()
+            });
           }
-        });
-
-        normalized.push({
-          product_id: productId,
-          group_id: groupId,
-          category_id: categoryId,
-          name: name,
-          clean_name: name.toLowerCase().trim(),
-          number: numberCol ? normalizedRow[numberCol] || null : null,
-          rarity: rarityCol ? normalizedRow[rarityCol] || null : null,
-          product_type: productType,
-          url_slug: slugCol ? normalizedRow[slugCol] || kebab(name) : kebab(name),
-          extended_data: Object.keys(extendedData).length > 0 ? extendedData : null,
-          updated_at: new Date().toISOString()
-        });
-      }
-    }
-    
-    // Process any remaining data
-    const finalRows = parser.finalize();
-    for (const row of finalRows) {
-      // Same normalization as above
-      const normalizedRow: any = {};
-      Object.keys(row).forEach(key => {
-        const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-        normalizedRow[normalizedKey] = row[key];
-      });
-
-      const productIdCol = Object.keys(normalizedRow).find(k => 
-        k === 'productid' || k === 'id'
-      );
-      const nameCol = Object.keys(normalizedRow).find(k => 
-        k === 'name' || k === 'cleanname' || k === 'productname'
-      );
-      
-      if (productIdCol && nameCol) {
-        const productId = Number(normalizedRow[productIdCol]);
-        const name = normalizedRow[nameCol];
-        
-        if (Number.isFinite(productId) && name) {
-          // Build extended_data from original row
-          const extendedData: any = {};
-          Object.keys(row).forEach(key => {
-            const value = row[key];
-            if (value && key !== productIdCol && key !== nameCol) {
-              extendedData[key] = value;
-            }
-          });
-
-          normalized.push({
-            product_id: productId,
-            group_id: groupId,
-            category_id: categoryId,
-            name: name,
-            clean_name: name.toLowerCase().trim(),
-            number: null,
-            rarity: null,
-            product_type: null,
-            url_slug: kebab(name),
-            extended_data: Object.keys(extendedData).length > 0 ? extendedData : null,
-            updated_at: new Date().toISOString()
-          });
         }
       }
+      
+      const totalTime = Date.now() - startTime;
+      
+      console.log(`[${operationId}] Group ${groupId}: ${normalized.length} products, ${skipped} skipped, ${bytesProcessed} bytes, ${totalTime}ms, ${retryAttempts} attempts`);
+      
+      return {
+        success: true,
+        groupId,
+        groupName,
+        products: normalized,
+        fetched: parser.getRowCount(),
+        upserted: 0, // Will be set after DB operation
+        skipped,
+        bytes: bytesProcessed,
+        ms: totalTime,
+        retryAttempts,
+        rateLimited
+      };
     }
     
-    const totalTime = Date.now() - startTime;
-    
-    console.log(`[${operationId}] Group ${groupId}: ${normalized.length} products, ${skipped} skipped, ${bytesProcessed} bytes, ${totalTime}ms`);
-    
+    // All URL variants failed
     return {
-      success: true,
+      success: false,
       groupId,
       groupName,
-      products: normalized,
-      fetched: parser.getRowCount(),
-      upserted: 0, // Will be set after DB operation
-      skipped,
+      fetched: 0,
+      upserted: 0,
+      skipped: 0,
       bytes: bytesProcessed,
-      ms: totalTime
+      ms: Date.now() - startTime,
+      error: lastError || 'SOURCE_UNAVAILABLE',
+      retryAttempts,
+      rateLimited
     };
 
   } catch (error: any) {
@@ -339,7 +363,9 @@ async function fetchAndParseProducts(
       skipped: 0,
       bytes: bytesProcessed,
       ms: Date.now() - startTime,
-      error: error.message
+      error: error.message,
+      retryAttempts,
+      rateLimited
     };
   }
 }
@@ -398,43 +424,183 @@ async function batchUpsertProducts(products: any[], operationId: string, supabas
   return totalUpserted;
 }
 
-class ConcurrencyController {
-  private inFlight = 0;
-  private maxConcurrency: number;
-  private maxInFlightBatches: number;
-  private inFlightBatches = 0;
+// Adaptive worker pool
+class WorkerPool {
+  private queue: number[] = [];
+  private activeWorkers = 0;
+  private results: any[] = [];
+  private maxWorkers = getConcurrency();
+  private workers: Promise<void>[] = [];
+  private adjustInterval: number;
 
-  constructor(maxConcurrency: number) {
-    this.maxConcurrency = maxConcurrency;
-    this.maxInFlightBatches = maxConcurrency * 2; // Backpressure threshold
+  constructor(
+    private groupIds: number[],
+    private categoryId: number,
+    private includeSealed: boolean,
+    private includeSingles: boolean,
+    private operationId: string,
+    private supabase: any,
+    private dryRun: boolean,
+    private progressCallback: (progress: any) => void
+  ) {
+    this.queue = [...groupIds];
+    
+    // Periodically adjust worker count based on adaptive concurrency
+    this.adjustInterval = setInterval(() => {
+      const target = getConcurrency();
+      const diff = target - this.workers.length;
+      if (diff > 0) {
+        for (let i = 0; i < diff; i++) {
+          this.workers.push(this.worker());
+        }
+      }
+      console.log(`[${operationId}] Adaptive concurrency: ${this.workers.length} → ${target}`);
+    }, 1500);
   }
 
-  async acquire(): Promise<void> {
-    while (this.inFlight >= this.maxConcurrency || 
-           this.inFlightBatches >= this.maxInFlightBatches) {
-      await new Promise(resolve => setTimeout(resolve, 10));
+  private async worker(): Promise<void> {
+    while (true) {
+      const groupId = this.queue.shift();
+      if (groupId == null) return;
+      
+      this.activeWorkers++;
+      
+      try {
+        const group = { group_id: groupId, name: `Group ${groupId}` }; // Simplified for this worker
+        const result = await fetchAndParseProducts(
+          group.group_id,
+          group.name,
+          this.categoryId,
+          this.includeSealed,
+          this.includeSingles,
+          this.operationId
+        );
+        
+        // Upsert products if not dry run and successful
+        if (!this.dryRun && result.success && result.products) {
+          try {
+            result.upserted = await batchUpsertProducts(result.products, this.operationId, this.supabase);
+            // free memory ASAP
+            result.products = undefined;
+          } catch (error: any) {
+            result.error = `Upsert failed: ${error.message}`;
+            result.success = false;
+          }
+        }
+        
+        this.results.push({
+          groupId: result.groupId,
+          groupName: result.groupName,
+          fetched: result.fetched,
+          upserted: result.upserted,
+          skipped: result.skipped,
+          bytes: result.bytes,
+          ms: result.ms,
+          error: result.error || null,
+          retryAttempts: result.retryAttempts || 0,
+          rateLimited: result.rateLimited || false
+        });
+        
+        // Report progress
+        this.progressCallback({
+          completed: this.results.length,
+          total: this.groupIds.length,
+          inFlight: this.activeWorkers,
+          workers: this.workers.length,
+          throttleStats: getThrottleStats()
+        });
+        
+      } finally {
+        this.activeWorkers--;
+      }
     }
-    this.inFlight++;
   }
 
-  release(): void {
-    this.inFlight = Math.max(0, this.inFlight - 1);
+  async run(): Promise<any[]> {
+    // Start initial workers
+    this.maxWorkers = getConcurrency();
+    for (let i = 0; i < this.maxWorkers; i++) {
+      this.workers.push(this.worker());
+    }
+    
+    await Promise.all(this.workers);
+    clearInterval(this.adjustInterval);
+    
+    return this.results;
   }
+}
 
-  async acquireBatch(): Promise<void> {
-    this.inFlightBatches++;
+async function createOrUpdateJob(
+  supabase: any,
+  operationId: string,
+  categoryId: number,
+  totalGroups: number,
+  jobId?: string
+) {
+  if (jobId) {
+    // Update existing job
+    const { error } = await supabase
+      .from('tcgcsv_jobs')
+      .update({ last_updated: new Date().toISOString() })
+      .eq('id', jobId);
+    
+    if (error) {
+      console.error('Failed to update job:', error);
+    }
+    return jobId;
+  } else {
+    // Create new job
+    const { data, error } = await supabase
+      .from('tcgcsv_jobs')
+      .insert({
+        job_type: 'products_bulk_csv',
+        category_id: categoryId,
+        total_groups: totalGroups,
+        metadata: { operation_id: operationId }
+      })
+      .select('id')
+      .single();
+    
+    if (error) {
+      console.error('Failed to create job:', error);
+      return null;
+    }
+    
+    return data?.id;
   }
+}
 
-  releaseBatch(): void {
-    this.inFlightBatches = Math.max(0, this.inFlightBatches - 1);
+async function updateJobProgress(
+  supabase: any,
+  jobId: string,
+  succeededIds: number[],
+  failedIds: number[]
+) {
+  const { error } = await supabase
+    .from('tcgcsv_jobs')
+    .update({
+      succeeded_group_ids: succeededIds,
+      failed_group_ids: failedIds,
+      last_updated: new Date().toISOString()
+    })
+    .eq('id', jobId);
+  
+  if (error) {
+    console.error('Failed to update job progress:', error);
   }
+}
 
-  getStats() {
-    return {
-      inFlight: this.inFlight,
-      inFlightBatches: this.inFlightBatches,
-      maxConcurrency: this.maxConcurrency
-    };
+async function finishJob(supabase: any, jobId: string) {
+  const { error } = await supabase
+    .from('tcgcsv_jobs')
+    .update({
+      finished_at: new Date().toISOString(),
+      last_updated: new Date().toISOString()
+    })
+    .eq('id', jobId);
+  
+  if (error) {
+    console.error('Failed to finish job:', error);
   }
 }
 
@@ -456,7 +622,9 @@ serve(async (req) => {
       dryRun = false,
       maxConcurrency,
       page = 1,
-      pageSize = 25
+      pageSize = 25,
+      jobId,
+      retryFailedOnly = false
     } = await req.json();
     
     if (!categoryId || !Number.isInteger(categoryId)) {
@@ -472,13 +640,35 @@ serve(async (req) => {
       groupIds: groupIds?.length || 'ALL',
       includeSealed, 
       includeSingles, 
-      dryRun
+      dryRun,
+      retryFailedOnly
     });
 
     // Determine target groups
     let targetGroups: any[] = [];
     
-    if (Array.isArray(groupIds) && groupIds.length > 0) {
+    if (retryFailedOnly && jobId) {
+      // Get failed groups from previous job
+      const { data: job } = await supabase
+        .from('tcgcsv_jobs')
+        .select('failed_group_ids')
+        .eq('id', jobId)
+        .single();
+      
+      if (job?.failed_group_ids?.length > 0) {
+        const { data: groups, error } = await supabase
+          .from('tcgcsv_groups')
+          .select('group_id, name')
+          .in('group_id', job.failed_group_ids)
+          .eq('category_id', categoryId);
+
+        if (error) {
+          throw new Error(`Failed to fetch failed groups: ${error.message}`);
+        }
+        
+        targetGroups = groups || [];
+      }
+    } else if (Array.isArray(groupIds) && groupIds.length > 0) {
       const { data: groups, error } = await supabase
         .from('tcgcsv_groups')
         .select('group_id, name')
@@ -502,6 +692,7 @@ serve(async (req) => {
         groupIdsResolved: [],
         summary: { fetched: 0, upserted: 0, skipped: 0 },
         perGroup: [],
+        throttle: getThrottleStats(),
         note: 'No groups found for the specified criteria'
       }, 200, req);
     }
@@ -519,10 +710,6 @@ serve(async (req) => {
     const hasMore = end < totalGroups;
     const nextPage = hasMore ? p + 1 : null;
 
-    const envConcurrency = Number(Deno.env.get('TCGCSV_CONCURRENCY')) || 2;
-    const requestedConcurrency = (typeof maxConcurrency === 'number' && isFinite(maxConcurrency)) ? maxConcurrency : undefined;
-    const concurrency = Math.max(1, Math.min(2, groupsToProcess.length, requestedConcurrency ?? envConcurrency));
-
     if (groupsToProcess.length === 0) {
       return json({
         success: true,
@@ -532,74 +719,68 @@ serve(async (req) => {
         summary: { fetched: 0, upserted: 0, skipped: 0, rateRPS: 0, rateUPS: 0 },
         perGroup: [],
         pagination: { page: p, pageSize: size, nextPage, hasMore, totalGroups },
+        throttle: getThrottleStats(),
         note: 'No groups to process on this page'
       }, 200, req);
     }
 
-    const controller = new ConcurrencyController(concurrency);
+    // Create or update job
+    const currentJobId = await createOrUpdateJob(supabase, operationId, categoryId, totalGroups, jobId);
     
     const startTime = Date.now();
-    const perGroupResults: any[] = [];
     let totalFetched = 0;
     let totalUpserted = 0;
     let totalSkipped = 0;
+    let rateLimitedCount = 0;
     
-    // Process groups with controlled concurrency, page slice only
-    const promises = groupsToProcess.map(async (group) => {
-      await controller.acquire();
-      
-      try {
-        const result = await fetchAndParseProducts(
-          group.group_id,
-          group.name,
-          categoryId,
-          includeSealed,
-          includeSingles,
-          operationId
-        );
-        
-        // Upsert products if not dry run and successful
-        if (!dryRun && result.success && result.products) {
-          await controller.acquireBatch();
-          try {
-            result.upserted = await batchUpsertProducts(result.products, operationId, supabase);
-            // free memory ASAP
-            result.products = undefined;
-          } finally {
-            controller.releaseBatch();
-          }
-        }
-        
-        perGroupResults.push({
-          groupId: result.groupId,
-          groupName: result.groupName,
-          fetched: result.fetched,
-          upserted: result.upserted,
-          skipped: result.skipped,
-          bytes: result.bytes,
-          ms: result.ms,
-          error: result.error || null
-        });
-        
-        totalFetched += result.fetched;
-        totalUpserted += result.upserted;
-        totalSkipped += result.skipped;
-        
-        const stats = controller.getStats();
-        console.log(`[${operationId}] Completed group ${group.group_id} | In-flight: ${stats.inFlight}/${stats.maxConcurrency} | Batches: ${stats.inFlightBatches}`);
-        
-      } finally {
-        controller.release();
+    // Use adaptive worker pool
+    const workerPool = new WorkerPool(
+      groupsToProcess.map(g => g.group_id),
+      categoryId,
+      includeSealed,
+      includeSingles,
+      operationId,
+      supabase,
+      dryRun,
+      (progress) => {
+        console.log(`[${operationId}] Progress: ${progress.completed}/${progress.total} | Workers: ${progress.workers} | In-flight: ${progress.inFlight} | Concurrency: ${progress.throttleStats.concurrency}`);
       }
-    });
-
-    await Promise.all(promises);
+    );
+    
+    const perGroupResults = await workerPool.run();
+    
+    // Calculate totals
+    const succeededIds: number[] = [];
+    const failedIds: number[] = [];
+    
+    for (const result of perGroupResults) {
+      totalFetched += result.fetched;
+      totalUpserted += result.upserted;
+      totalSkipped += result.skipped;
+      
+      if (result.rateLimited) rateLimitedCount++;
+      
+      if (result.error) {
+        failedIds.push(result.groupId);
+      } else {
+        succeededIds.push(result.groupId);
+      }
+    }
+    
+    // Update job progress
+    if (currentJobId) {
+      await updateJobProgress(supabase, currentJobId, succeededIds, failedIds);
+      
+      if (!hasMore) {
+        await finishJob(supabase, currentJobId);
+      }
+    }
     
     const totalTime = Date.now() - startTime;
     const rateRPS = totalFetched > 0 ? Math.round((totalFetched / totalTime) * 1000) : 0;
     const rateUPS = totalUpserted > 0 ? Math.round((totalUpserted / totalTime) * 1000) : 0;
 
-    console.log(`[${operationId}] Bulk sync completed: ${totalFetched} fetched, ${totalUpserted} upserted in ${totalTime}ms (${rateRPS} RPS, ${rateUPS} UPS)`);
+    console.log(`[${operationId}] Bulk sync completed: ${totalFetched} fetched, ${totalUpserted} upserted in ${totalTime}ms (${rateRPS} RPS, ${rateUPS} UPS), ${rateLimitedCount} rate limited`);
 
     const responseBody = {
       success: true,
@@ -611,11 +792,14 @@ serve(async (req) => {
         upserted: totalUpserted,
         skipped: totalSkipped,
         rateRPS,
-        rateUPS
+        rateUPS,
+        rateLimitedCount
       },
       perGroup: perGroupResults.sort((a, b) => a.groupId - b.groupId),
       dryRun,
       pagination: { page: p, pageSize: size, nextPage, hasMore, totalGroups },
+      throttle: getThrottleStats(),
+      jobId: currentJobId,
       operationId
     };
     
@@ -633,6 +817,7 @@ serve(async (req) => {
       groupIdsResolved: [],
       summary: { fetched: 0, upserted: 0, skipped: 0 },
       perGroup: [],
+      throttle: getThrottleStats(),
       error: error?.message || "Unknown error",
       operationId
     }, 500, req);

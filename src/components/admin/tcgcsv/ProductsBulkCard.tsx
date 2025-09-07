@@ -26,6 +26,7 @@ interface BulkSyncResult {
     skipped: number;
     rateRPS: number;
     rateUPS: number;
+    rateLimitedCount?: number;
   };
   perGroup: Array<{
     groupId: number;
@@ -36,9 +37,29 @@ interface BulkSyncResult {
     bytes: number;
     ms: number;
     error?: string;
+    retryAttempts?: number;
+    rateLimited?: boolean;
   }>;
+  pagination?: {
+    page: number;
+    pageSize: number;
+    nextPage: number | null;
+    hasMore: boolean;
+    totalGroups: number;
+  };
+  throttle?: {
+    concurrency: number;
+    successes: number;
+    tokens: number;
+    maxTokens: number;
+    targetRps: number;
+    circuitOpen: boolean;
+    circuitFailures: number;
+    circuitTimeUntilClose: number;
+  };
   dryRun?: boolean;
   operationId?: string;
+  jobId?: string;
   error?: string;
 }
 
@@ -54,6 +75,7 @@ export const ProductsBulkCard = () => {
   const [showRawResponse, setShowRawResponse] = useState(false);
   const [authStatus, setAuthStatus] = useState<any>(null);
   const [sequentialMode, setSequentialMode] = useState(false);
+  const [showThrottleStats, setShowThrottleStats] = useState(false);
 
   const { categories, loading: categoriesLoading } = useCategories();
   const { groups, loading: groupsLoading } = useGroups(
@@ -373,7 +395,43 @@ export const ProductsBulkCard = () => {
 
         {/* Action Buttons */}
         <div className="flex items-center gap-4">
-          <Button 
+          <Button
+            variant="outline"
+            onClick={() => handleBulkSync(true)}
+            disabled={syncLoading || !canSubmit}
+            className="flex items-center gap-2"
+          >
+            <Activity className="h-4 w-4" />
+            Preview
+          </Button>
+
+          {lastResult?.pagination?.hasMore && (
+            <Button
+              variant="outline"
+              onClick={() => handleBulkSync(false)}
+              disabled={syncLoading}
+              className="flex items-center gap-2"
+            >
+              Continue ({lastResult.pagination.nextPage}/{Math.ceil(lastResult.pagination.totalGroups / lastResult.pagination.pageSize)})
+            </Button>
+          )}
+
+          {lastResult?.perGroup?.some(g => g.error) && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                const failedIds = lastResult.perGroup.filter(g => g.error).map(g => g.groupId);
+                setSelectedGroupIds(failedIds.map(String));
+                handleBulkSync(false);
+              }}
+              disabled={syncLoading}
+              className="flex items-center gap-2 text-orange-600"
+            >
+              Retry Failed Only
+            </Button>
+          )}
+
+          <Button
             onClick={() => handleBulkSync(false)} 
             disabled={syncLoading || !canSubmit}
             className="flex items-center gap-2"
@@ -414,15 +472,30 @@ export const ProductsBulkCard = () => {
 
         {/* Live Progress (during sync) */}
         {syncLoading && (
-          <div className="space-y-2 p-3 bg-muted/50 rounded-lg">
+          <div className="space-y-3 p-4 bg-muted/50 rounded-lg">
             <div className="flex items-center justify-between text-sm">
               <span>Bulk sync in progress...</span>
-              <Badge variant="secondary">High Throughput</Badge>
+              <div className="flex gap-2">
+                <Badge variant="secondary">Rate Limited</Badge>
+                <Badge variant="outline">
+                  ⚙️ <button onClick={() => setShowThrottleStats(!showThrottleStats)} className="ml-1">
+                    {showThrottleStats ? 'Hide' : 'Show'} Stats
+                  </button>
+                </Badge>
+              </div>
             </div>
             <Progress value={undefined} className="w-full" />
             <div className="text-xs text-muted-foreground">
-              {sequentialMode ? 'Sequential mode: processing one group per request' : 'Bulk mode: server-controlled concurrency and batching'}
+              {sequentialMode ? 'Sequential mode: processing one group per request' : 'Adaptive concurrency with rate limiting and circuit breaker'}
             </div>
+            {showThrottleStats && lastResult?.throttle && (
+              <div className="text-xs space-y-1 p-2 bg-background rounded border">
+                <div>Concurrency: {lastResult.throttle.concurrency} workers</div>
+                <div>Tokens: {lastResult.throttle.tokens.toFixed(1)}/{lastResult.throttle.maxTokens} ({lastResult.throttle.targetRps} req/s target)</div>
+                <div>Circuit: {lastResult.throttle.circuitOpen ? `OPEN (${Math.round(lastResult.throttle.circuitTimeUntilClose/1000)}s)` : 'CLOSED'}</div>
+                <div>Failures: {lastResult.throttle.circuitFailures}</div>
+              </div>
+            )}
           </div>
         )}
 
@@ -441,8 +514,65 @@ export const ProductsBulkCard = () => {
                 <Badge variant="secondary">
                   {lastResult.summary?.rateUPS || 0} upserts/sec
                 </Badge>
+                {lastResult.summary?.rateLimitedCount > 0 && (
+                  <Badge variant="destructive" className="text-xs">
+                    {lastResult.summary.rateLimitedCount} rate limited
+                  </Badge>
+                )}
+                {lastResult.throttle && (
+                  <Badge 
+                    variant={lastResult.throttle.circuitOpen ? "destructive" : "outline"}
+                    className="text-xs cursor-pointer"
+                    onClick={() => setShowThrottleStats(!showThrottleStats)}
+                  >
+                    ⚙️ {lastResult.throttle.concurrency} workers
+                  </Badge>
+                )}
               </div>
             </div>
+
+            {/* Throttling stats */}
+            {showThrottleStats && lastResult.throttle && (
+              <div className="p-3 bg-background rounded border space-y-2">
+                <h5 className="text-sm font-medium">Rate Limiting Stats</h5>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <div className="text-muted-foreground">Concurrency</div>
+                    <div>{lastResult.throttle.concurrency}/{lastResult.throttle.successes >= 20 ? '+' : '='}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Token Bucket</div>
+                    <div>{lastResult.throttle.tokens.toFixed(1)}/{lastResult.throttle.maxTokens}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Target RPS</div>
+                    <div>{lastResult.throttle.targetRps}/sec</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Circuit State</div>
+                    <div className={lastResult.throttle.circuitOpen ? "text-red-600" : "text-green-600"}>
+                      {lastResult.throttle.circuitOpen ? `OPEN (${Math.round(lastResult.throttle.circuitTimeUntilClose/1000)}s)` : 'CLOSED'}
+                    </div>
+                  </div>
+                </div>
+                {lastResult.throttle.circuitFailures > 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    Circuit failures: {lastResult.throttle.circuitFailures}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Pagination info */}
+            {lastResult.pagination && (
+              <div className="text-sm text-muted-foreground space-y-1">
+                <div>Page {lastResult.pagination.page} of {Math.ceil(lastResult.pagination.totalGroups / lastResult.pagination.pageSize)} 
+                  ({lastResult.pagination.totalGroups} total groups)</div>
+                {lastResult.pagination.hasMore && (
+                  <div className="text-blue-600">More groups available - click Continue to process next page</div>
+                )}
+              </div>
+            )}
 
             {/* High-level metrics */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -497,12 +627,28 @@ export const ProductsBulkCard = () => {
                           <span>{formatNumber(group.upserted)} upserted</span>
                           {group.skipped > 0 && <span>{formatNumber(group.skipped)} skipped</span>}
                           <span>{group.ms}ms</span>
+                          {group.retryAttempts > 1 && (
+                            <Badge variant="outline" className="text-xs">
+                              {group.retryAttempts} attempts
+                            </Badge>
+                          )}
+                          {group.rateLimited && (
+                            <Badge variant="destructive" className="text-xs">
+                              Rate Limited
+                            </Badge>
+                          )}
                         </div>
                       </div>
                       
                       <CollapsibleContent className="px-2">
                         <div className="text-xs text-muted-foreground mt-1 space-y-1">
                           <div>Performance: {Math.round(group.bytes / 1024)}KB in {group.ms}ms</div>
+                          {group.retryAttempts > 1 && (
+                            <div>Retry attempts: {group.retryAttempts}</div>
+                          )}
+                          {group.rateLimited && (
+                            <div className="text-orange-600">Rate limited during fetch</div>
+                          )}
                           {group.error && (
                             <div className="text-destructive">Error: {group.error}</div>
                           )}
