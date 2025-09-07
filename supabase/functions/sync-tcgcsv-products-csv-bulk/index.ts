@@ -358,7 +358,7 @@ async function batchUpsertProducts(products: any[], operationId: string, supabas
   }
   const uniqueProducts = Array.from(uniqueMap.values());
 
-  const batchSize = Number(Deno.env.get('UPSERT_BATCH_SIZE')) || 5000;
+  const batchSize = Number(Deno.env.get('UPSERT_BATCH_SIZE')) || 1000;
   let totalUpserted = 0;
   
   for (let i = 0; i < uniqueProducts.length; i += batchSize) {
@@ -453,7 +453,8 @@ serve(async (req) => {
       groupIds, 
       includeSealed = true, 
       includeSingles = true, 
-      dryRun = false 
+      dryRun = false,
+      maxConcurrency
     } = await req.json();
     
     if (!categoryId || !Number.isInteger(categoryId)) {
@@ -503,9 +504,11 @@ serve(async (req) => {
       }, 200, req);
     }
 
-    console.log(`[${operationId}] Processing ${targetGroups.length} groups with high concurrency`);
+    console.log(`[${operationId}] Processing ${targetGroups.length} groups with concurrency control`);
 
-    const concurrency = Number(Deno.env.get('TCGCSV_CONCURRENCY')) || 12;
+    const envConcurrency = Number(Deno.env.get('TCGCSV_CONCURRENCY')) || 4;
+    const requestedConcurrency = (typeof maxConcurrency === 'number' && isFinite(maxConcurrency)) ? maxConcurrency : undefined;
+    const concurrency = Math.max(1, Math.min(targetGroups.length, requestedConcurrency ?? envConcurrency));
     const controller = new ConcurrencyController(concurrency);
     
     const startTime = Date.now();
@@ -533,6 +536,8 @@ serve(async (req) => {
           await controller.acquireBatch();
           try {
             result.upserted = await batchUpsertProducts(result.products, operationId, supabase);
+            // free memory ASAP
+            result.products = undefined;
           } finally {
             controller.releaseBatch();
           }
