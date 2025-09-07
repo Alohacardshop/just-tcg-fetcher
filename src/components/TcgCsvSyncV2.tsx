@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '@/integrations/supabase/client';
 import { useSyncLogs } from "@/hooks/useSyncStatus";
-import { Search, RefreshCw, Download, Zap, Activity, Clock } from 'lucide-react';
+import { Search, RefreshCw, Download, Zap, Activity, Clock, Route } from 'lucide-react';
+import { GuidedSyncPanel } from './GuidedSyncPanel';
+import { SetMappingPanel } from './SetMappingPanel';
 
 interface Game {
   id: string;
@@ -302,12 +304,25 @@ export const TcgCsvSyncV2 = () => {
             </Button>
           </div>
 
-          <Tabs defaultValue="categories" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="categories">Browse Categories ({categories?.length || 0})</TabsTrigger>
+          <Tabs defaultValue="workflow" className="w-full">
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="workflow">Guided Workflow</TabsTrigger>
+              <TabsTrigger value="categories">Categories ({categories?.length || 0})</TabsTrigger>
+              <TabsTrigger value="mapping">Set Mapping</TabsTrigger>
               <TabsTrigger value="match">Smart Match</TabsTrigger>
               <TabsTrigger value="monitor">Monitor</TabsTrigger>
             </TabsList>
+            
+            <TabsContent value="workflow" className="space-y-4">
+              <GuidedSyncPanel 
+                selectedGame={selectedGame}
+                onGameSelect={setSelectedGame}
+              />
+            </TabsContent>
+
+            <TabsContent value="mapping" className="space-y-4">
+              <SetMappingPanel selectedGame={selectedGame} />
+            </TabsContent>
             
             <TabsContent value="categories" className="space-y-4">
               {/* Search and Controls */}
