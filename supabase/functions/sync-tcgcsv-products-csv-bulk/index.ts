@@ -506,9 +506,24 @@ serve(async (req) => {
 
     console.log(`[${operationId}] Processing ${targetGroups.length} groups with concurrency control`);
 
-    const envConcurrency = Number(Deno.env.get('TCGCSV_CONCURRENCY')) || 4;
+    // Limit concurrency to prevent CPU timeout
+    const envConcurrency = Number(Deno.env.get('TCGCSV_CONCURRENCY')) || 2;
     const requestedConcurrency = (typeof maxConcurrency === 'number' && isFinite(maxConcurrency)) ? maxConcurrency : undefined;
-    const concurrency = Math.max(1, Math.min(targetGroups.length, requestedConcurrency ?? envConcurrency));
+    const concurrency = Math.max(1, Math.min(2, targetGroups.length, requestedConcurrency ?? envConcurrency));
+    
+    // If too many groups, suggest using selective sync instead
+    if (targetGroups.length > 50) {
+      return json({
+        success: false,
+        categoryId,
+        groupsProcessed: 0,
+        groupIdsResolved: [],
+        summary: { fetched: 0, upserted: 0, skipped: 0 },
+        perGroup: [],
+        error: `Too many groups (${targetGroups.length}) for bulk sync. Use selective sync with specific group IDs instead.`,
+        operationId
+      }, 400, req);
+    }
     const controller = new ConcurrencyController(concurrency);
     
     const startTime = Date.now();
