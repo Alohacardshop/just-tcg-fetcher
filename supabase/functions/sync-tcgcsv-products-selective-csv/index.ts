@@ -91,6 +91,7 @@ async function fetchAndParseProducts(groupId: number, groupName: string, categor
           'Cache-Control': 'no-cache',
           'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)',
           'Referer': 'https://tcgcsv.com/'
+        },
         signal: controller.signal
       });
       clearTimeout(timeout);
