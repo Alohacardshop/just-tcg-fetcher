@@ -366,39 +366,14 @@ async function batchUpsertProducts(products: any[], operationId: string, supabas
     return 0;
   }
 
-  // Create unique key combining product_id and key distinguishing features to preserve variants
-  const uniqueMap = new Map<string, any>();
-  let duplicatesRemoved = 0;
-  
-  for (const p of products) {
-    if (p && typeof p.product_id === 'number') {
-      // Create unique key from product_id + distinguishing variant features
-      const variantKey = [
-        p.product_id,
-        p.rarity || '',
-        p.product_type || '',
-        (p.extended_data?.subTypeName || ''),
-        (p.extended_data?.extRarity || ''),
-        (p.extended_data?.extCardType || '')
-      ].join('|');
-      
-      if (uniqueMap.has(variantKey)) {
-        duplicatesRemoved++;
-        console.log(`[${operationId}] Duplicate variant key ${variantKey}: keeping "${uniqueMap.get(variantKey).name}", removing "${p.name}"`);
-      } else {
-        uniqueMap.set(variantKey, p);
-      }
-    }
-  }
-  const uniqueProducts = Array.from(uniqueMap.values());
-  
-  console.log(`[${operationId}] Variant deduplication complete: ${products.length} total → ${uniqueProducts.length} unique variants (${duplicatesRemoved} exact duplicates removed)`);
+  // Skip all duplicate handling - just insert everything as-is
+  console.log(`[${operationId}] Batch upserting ${products.length} products (no deduplication)`);
 
   const batchSize = Number(Deno.env.get('UPSERT_BATCH_SIZE')) || 1000;
   let totalUpserted = 0;
   
-  for (let i = 0; i < uniqueProducts.length; i += batchSize) {
-    const batch = uniqueProducts.slice(i, i + batchSize);
+  for (let i = 0; i < products.length; i += batchSize) {
+    const batch = products.slice(i, i + batchSize);
     
     let retries = 0;
     const maxRetries = 3;
@@ -409,7 +384,7 @@ async function batchUpsertProducts(products: any[], operationId: string, supabas
           .from('tcgcsv_products')
           .upsert(batch, { 
             onConflict: 'product_id',
-            ignoreDuplicates: false 
+            ignoreDuplicates: true  // Ignore duplicate errors
           });
 
         if (error) {
