@@ -311,7 +311,7 @@ async function fetchAndParseProducts(
       
       const totalTime = Date.now() - startTime;
       
-      console.log(`[${operationId}] Group ${groupId}: ${normalized.length} products, ${skipped} skipped, ${bytesProcessed} bytes, ${totalTime}ms, ${retryAttempts} attempts`);
+      console.log(`[${operationId}] Group ${groupId}: ${normalized.length} products parsed, ${skipped} parsing errors, ${bytesProcessed} bytes, ${totalTime}ms, ${retryAttempts} attempts`);
       
       return {
         success: true,
@@ -320,7 +320,7 @@ async function fetchAndParseProducts(
         products: normalized,
         fetched: parser.getRowCount(),
         upserted: 0, // Will be set after DB operation
-        skipped,
+        skipped: 0, // Don't count parsing errors as skipped - that will be handled by deduplication
         bytes: bytesProcessed,
         ms: totalTime,
         retryAttempts,
@@ -368,12 +368,20 @@ async function batchUpsertProducts(products: any[], operationId: string, supabas
 
   // Deduplicate by product_id to avoid ON CONFLICT affecting the same row twice
   const uniqueMap = new Map<number, any>();
+  let duplicatesRemoved = 0;
+  
   for (const p of products) {
     if (p && typeof p.product_id === 'number') {
+      if (uniqueMap.has(p.product_id)) {
+        duplicatesRemoved++;
+        console.log(`[${operationId}] Duplicate product_id ${p.product_id}: keeping "${uniqueMap.get(p.product_id).name}", removing "${p.name}"`);
+      }
       uniqueMap.set(p.product_id, p);
     }
   }
   const uniqueProducts = Array.from(uniqueMap.values());
+  
+  console.log(`[${operationId}] Deduplication complete: ${products.length} total → ${uniqueProducts.length} unique (${duplicatesRemoved} duplicates removed)`);
 
   const batchSize = Number(Deno.env.get('UPSERT_BATCH_SIZE')) || 1000;
   let totalUpserted = 0;
