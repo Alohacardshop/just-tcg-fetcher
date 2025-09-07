@@ -34,10 +34,29 @@ export const TcgCsvSyncV2 = () => {
 
       if (error) throw error;
 
-      toast({
-        title: "Success",
-        description: `Synced ${data.categoriesCount} categories successfully`,
-      });
+      // Defensive count calculation
+      const count = Array.isArray(data?.categories) ? data.categories.length
+        : Number.isFinite(data?.categoriesCount) ? data.categoriesCount : 0;
+      
+      const skipped = data?.skipped || 0;
+      
+      if (count === 0) {
+        toast({
+          title: "No Categories Found",
+          description: "No valid categories were returned from TCGCSV. Check the logs for details.",
+          variant: "destructive",
+        });
+      } else {
+        let message = `Synced ${count} categories successfully`;
+        if (skipped > 0) {
+          message += ` (${skipped} invalid categories skipped)`;
+        }
+        
+        toast({
+          title: "Success",
+          description: message,
+        });
+      }
       
       setLastSync(new Date().toLocaleString());
     } catch (error: any) {
