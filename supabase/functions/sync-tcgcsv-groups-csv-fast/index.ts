@@ -1,17 +1,26 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Content-Type": "application/json; charset=utf-8",
-  "Cache-Control": "no-store",
-};
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
 
-function json(body: unknown, status: number = 200) {
+function cors(req: Request) {
+  const origin = req.headers.get('Origin') ?? '*';
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'authorization,apikey,content-type',
+    'Vary': 'Origin'
+  };
+}
+
+function json(body: unknown, status = 200, req?: Request) {
   return new Response(JSON.stringify(body), { 
-    status,
-    headers: CORS 
+    status, 
+    headers: { 
+      'Content-Type': 'application/json', 
+      ...cors(req ?? new Request('')) 
+    }
   });
 }
 
@@ -292,15 +301,18 @@ async function batchUpsertGroups(groups: any[], operationId: string, supabase: a
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+  // Handle CORS preflight requests
+  if (req.method === "OPTIONS") return new Response(null, { headers: cors(req) });
 
   const operationId = crypto.randomUUID();
   
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  // Create Supabase client with token pass-through
+  const auth = req.headers.get('Authorization') ?? `Bearer ${SUPABASE_ANON_KEY}`;
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: auth } }
+  });
 
+  try {
     const { categoryId } = await req.json();
     
     if (!categoryId || !Number.isInteger(categoryId)) {
@@ -309,7 +321,7 @@ serve(async (req) => {
         categoryId: categoryId || null,
         summary: { fetched: 0, upserted: 0, skipped: 0 },
         error: "categoryId is required and must be an integer"
-      }, 400);
+      }, 400, req);
     }
 
     console.log(`[${operationId}] Starting TCGCSV groups fast CSV sync for category ${categoryId}`);
@@ -324,7 +336,7 @@ serve(async (req) => {
         error: result.error,
         note: result.note,
         operationId
-      });
+      }, 500, req);
     }
     
     const { upserted, rateUPS } = await batchUpsertGroups(result.groups, operationId, supabase);
@@ -342,7 +354,7 @@ serve(async (req) => {
         rateUPS
       },
       operationId
-    });
+    }, 200, req);
 
   } catch (error: any) {
     console.error(`[${operationId}] Groups fast sync error:`, error);
@@ -353,6 +365,6 @@ serve(async (req) => {
       summary: { fetched: 0, upserted: 0, skipped: 0 },
       error: error?.message || "Unknown error",
       operationId
-    });
+    }, 500, req);
   }
 });

@@ -8,12 +8,13 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Layers, Search, X, AlertCircle, Loader2, Package } from 'lucide-react';
-import { useEdgeFn } from '@/hooks/useEdgeFn';
+import { Layers, Search, X, AlertCircle, Loader2, Package, User, UserX } from 'lucide-react';
+// Removed useEdgeFn import - using invokeFn instead
 import { useCategories } from '@/hooks/useCategories';
 import { useGroups } from '@/hooks/useGroups';
 import { formatRelativeTime, pluralize, truncateText } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
+import { invokeFn, checkAuthStatus } from '@/lib/invokeFn';
 
 type GroupsCsvResp = {
   success: boolean;
@@ -32,11 +33,17 @@ export const GroupsCard = () => {
   const [showRawResponse, setShowRawResponse] = useState(false);
   const [lastResponse, setLastResponse] = useState<any>(null);
   const [syncLoading, setSyncLoading] = useState(false);
+  const [authStatus, setAuthStatus] = useState<any>(null);
   
   const { categories, loading: categoriesLoading } = useCategories();
   const { groups, loading: groupsLoading, refetch: refetchGroups } = useGroups(
     selectedCategoryId ? Number(selectedCategoryId) : undefined
   );
+
+  // Check auth status on mount
+  React.useEffect(() => {
+    checkAuthStatus().then(setAuthStatus);
+  }, []);
 
   // Filter groups based on search query
   const filteredGroups = useMemo(() => {
@@ -187,6 +194,21 @@ export const GroupsCard = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Auth Status Indicator */}
+        <div className="flex items-center gap-2 text-sm mb-4">
+          {authStatus?.isAuthenticated ? (
+            <div className="flex items-center gap-1 text-green-600">
+              <User className="h-3 w-3" />
+              <span>Signed in as {authStatus.user?.email}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-muted-foreground">
+              <UserX className="h-3 w-3" />
+              <span>Using anonymous access</span>
+            </div>
+          )}
+        </div>
+
         {/* Controls */}
         <div className="flex items-end gap-4">
           <div className="flex-1 space-y-2">

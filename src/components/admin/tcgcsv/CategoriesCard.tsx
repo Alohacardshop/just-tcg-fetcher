@@ -3,53 +3,83 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Download, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
-import { useEdgeFn } from '@/hooks/useEdgeFn';
+import { Download, CheckCircle, AlertCircle, Loader2, User, UserX } from 'lucide-react';
+import { invokeFn, checkAuthStatus } from '@/lib/invokeFn';
 import { formatRelativeTime, pluralize, truncateText } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 
 export const CategoriesCard = () => {
-  const { data, loading, invoke } = useEdgeFn('sync-tcgcsv-categories-csv-fast');
+  const [loading, setLoading] = React.useState(false);
   const [lastRun, setLastRun] = React.useState<any>(null);
+  const [authStatus, setAuthStatus] = React.useState<any>(null);
+
+  // Check auth status on mount
+  React.useEffect(() => {
+    checkAuthStatus().then(setAuthStatus);
+  }, []);
 
   const handleSync = async () => {
+    setLoading(true);
+    
     try {
-      const result = await invoke({}, { suppressToast: true });
+      const { data, error, status } = await invokeFn<any>('sync-tcgcsv-categories-csv-fast', {});
       
-      const count = result?.summary?.upserted ?? 0;
+      // Handle auth errors
+      if (status === 401 || error?.authError) {
+        toast({
+          title: "Authentication required",
+          description: "Your session has expired. Please sign in and try again.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      if (!data?.success) {
+        toast({
+          title: "Sync failed",
+          description: data?.error || error?.message || "Unknown error",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const count = data.summary?.upserted ?? 0;
 
       if (count === 0) {
-        let description = "No categories in CSV — try again after daily update (20:00 UTC)";
-        
-        if (result?.error) {
-          description = `Error: ${result.error}`;
-          if (result?.hint?.code) {
-            description += ` (${result.hint.code})`;
-          }
-        }
-        
         toast({
           title: "No categories found",
-          description,
+          description: "No categories in CSV — try again after daily update (20:00 UTC)",
           variant: "destructive",
         });
       } else {
-        const skippedText = result?.summary?.skipped ? ` (${result.summary.skipped} skipped)` : '';
+        const skippedText = data.summary?.skipped ? ` (${data.summary.skipped} skipped)` : '';
+        const rateText = data.summary?.rateRPS ? ` • ${data.summary.rateRPS} rows/sec` : '';
         toast({ 
           title: "Categories synced successfully", 
-          description: `Synced ${count} categories (CSV)${skippedText}` 
+          description: `Synced ${count} categories (CSV)${skippedText}${rateText}` 
         });
       }
 
       setLastRun({
         timestamp: new Date(),
         count,
-        skipped: result?.summary?.skipped || 0,
-        note: result?.note,
-        error: result?.error
+        skipped: data.summary?.skipped || 0,
+        note: data.note,
+        error: data.error
       });
-    } catch (error) {
-      // Error handling is done in useEdgeFn
+      
+      // Refresh auth status
+      checkAuthStatus().then(setAuthStatus);
+      
+    } catch (error: any) {
+      console.error('Categories sync error:', error);
+      toast({
+        title: "Network error",
+        description: "Failed to sync categories. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -65,6 +95,21 @@ export const CategoriesCard = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Auth Status Indicator */}
+        <div className="flex items-center gap-2 text-sm">
+          {authStatus?.isAuthenticated ? (
+            <div className="flex items-center gap-1 text-green-600">
+              <User className="h-3 w-3" />
+              <span>Signed in as {authStatus.user?.email}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-muted-foreground">
+              <UserX className="h-3 w-3" />
+              <span>Using anonymous access</span>
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center gap-4">
           <Button 
             onClick={handleSync} 
@@ -116,15 +161,7 @@ export const CategoriesCard = () => {
           </div>
         )}
 
-        {data?.error && !lastRun && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              {truncateText(data.error)}
-              {data.hint?.code && ` (${data.hint.code})`}
-            </AlertDescription>
-          </Alert>
-        )}
+        {/* Status placeholder - errors now handled inline */}
       </CardContent>
     </Card>
   );

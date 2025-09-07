@@ -8,11 +8,12 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Progress } from '@/components/ui/progress';
-import { Package, AlertCircle, Loader2, ChevronDown, ChevronRight, Zap, Activity } from 'lucide-react';
+import { Package, AlertCircle, Loader2, ChevronDown, ChevronRight, Zap, Activity, User, UserX } from 'lucide-react';
 import { useCategories } from '@/hooks/useCategories';
 import { useGroups } from '@/hooks/useGroups';
 import { formatNumber, pluralize } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
+import { invokeFn, checkAuthStatus } from '@/lib/invokeFn';
 
 interface BulkSyncResult {
   success: boolean;
@@ -51,11 +52,17 @@ export const ProductsBulkCard = () => {
   const [lastResult, setLastResult] = useState<BulkSyncResult | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [showRawResponse, setShowRawResponse] = useState(false);
+  const [authStatus, setAuthStatus] = useState<any>(null);
 
   const { categories, loading: categoriesLoading } = useCategories();
   const { groups, loading: groupsLoading } = useGroups(
     selectedCategoryId ? Number(selectedCategoryId) : undefined
   );
+
+  // Check auth status on mount
+  React.useEffect(() => {
+    checkAuthStatus().then(setAuthStatus);
+  }, []);
 
   const canSubmit = useMemo(() => {
     return selectedCategoryId && (includeSealed || includeSingles);
@@ -80,14 +87,8 @@ export const ProductsBulkCard = () => {
     }
 
     setSyncLoading(true);
-    let controller: AbortController | null = null;
 
     try {
-      controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        controller?.abort();
-      }, 300000); // 5 minute timeout for bulk operations
-
       const payload: any = {
         categoryId: Number(selectedCategoryId),
         includeSealed,
@@ -105,43 +106,38 @@ export const ProductsBulkCard = () => {
         timestamp: new Date().toISOString() 
       });
 
-      const supabaseUrl = "https://ljywcyhnpzqgpowwrpre.supabase.co";
-      const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxqeXdjeWhucHpxZ3Bvd3dycHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTcwOTI2ODIsImV4cCI6MjA3MjY2ODY4Mn0.Hq0zKaJaWhNR4WLnqM4-UelgRFEPEFi_sk6p7CzqSEA";
-      
-      const response = await fetch(`${supabaseUrl}/functions/v1/sync-tcgcsv-products-csv-bulk`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${supabaseAnonKey}`,
-        },
-        body: JSON.stringify(payload),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      const result: BulkSyncResult = await response.json();
-      setLastResult(result);
+      const { data, error, status } = await invokeFn<BulkSyncResult>('sync-tcgcsv-products-csv-bulk', payload);
+      setLastResult(data || null);
       
       console.log('Bulk function response:', { 
         fn: 'sync-tcgcsv-products-csv-bulk', 
-        status: response.status, 
-        success: result.success,
-        summary: result.summary
+        status, 
+        success: data?.success,
+        summary: data?.summary
       });
 
-      if (!result?.success) {
+      // Handle auth errors
+      if (status === 401 || error?.authError) {
         toast({
-          title: "Bulk sync failed",
-          description: result?.error || 'Unknown error occurred',
+          title: "Authentication required",
+          description: "Your session has expired. Please sign in and try again.",
           variant: "destructive",
         });
         return;
       }
 
-      const { summary } = result;
+      if (!data?.success) {
+        toast({
+          title: "Bulk sync failed",
+          description: data?.error || error?.message || 'Unknown error occurred',
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const { summary } = data;
       const totalUpserted = summary?.upserted || 0;
-      const groupsProcessed = result.groupsProcessed || 0;
+      const groupsProcessed = data.groupsProcessed || 0;
 
       if (totalUpserted === 0) {
         let description = "No products processed — check category and filters";
@@ -164,28 +160,20 @@ export const ProductsBulkCard = () => {
           description: `${formatNumber(totalUpserted)} products across ${groupsProcessed} sets (CSV)${dryRunText}${rateText}${upsertRateText}` 
         });
       }
+      
+      // Refresh auth status
+      checkAuthStatus().then(setAuthStatus);
 
     } catch (error: any) {
       console.error('Bulk sync error:', error);
       
-      if (error.name === 'AbortError') {
-        toast({
-          title: "Request timeout",
-          description: "Bulk sync timed out after 5 minutes",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Network error",
-          description: error.message || "Failed to perform bulk sync",
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: "Network error",
+        description: error.message || "Failed to perform bulk sync",
+        variant: "destructive",
+      });
     } finally {
       setSyncLoading(false);
-      if (controller) {
-        controller.abort();
-      }
     }
   };
 
@@ -213,6 +201,21 @@ export const ProductsBulkCard = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Auth Status Indicator */}
+        <div className="flex items-center gap-2 text-sm">
+          {authStatus?.isAuthenticated ? (
+            <div className="flex items-center gap-1 text-green-600">
+              <User className="h-3 w-3" />
+              <span>Signed in as {authStatus.user?.email}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-muted-foreground">
+              <UserX className="h-3 w-3" />
+              <span>Using anonymous access</span>
+            </div>
+          )}
+        </div>
+
         {/* Category Selection */}
         <div className="space-y-2">
           <Label htmlFor="category">Category *</Label>
