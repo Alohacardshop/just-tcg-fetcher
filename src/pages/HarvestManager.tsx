@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { Header } from '@/components/Header';
+
 import { FullSetHarvester } from '@/components/FullSetHarvester';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,10 +22,7 @@ import {
 
 export default function HarvestManager() {
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      
-      <main className="container mx-auto px-4 py-8 space-y-8">
+    <div className="container mx-auto p-8 space-y-8 animate-fade-in max-w-7xl">
         {/* Page Header */}
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold tracking-tight">Set Harvest Manager</h1>
@@ -249,7 +246,6 @@ export default function HarvestManager() {
             </div>
           </CardContent>
         </Card>
-      </main>
-    </div>
+      </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppLayout } from '@/components/layout/AppLayout';
+
 import { SearchFilters } from '@/components/SearchFilters';
 import { DataImportPanel } from '@/components/DataImportPanel';
 import DataManager from './DataManager';
@@ -205,7 +205,7 @@ const Index = () => {
   };
 
   return (
-    <AppLayout>
+    <div className="container mx-auto p-8 space-y-8 animate-fade-in max-w-7xl">
       <div className="space-y-6">
         {renderBreadcrumb()}
         
@@ -386,7 +386,7 @@ const Index = () => {
           </div>
         )}
       </div>
-    </AppLayout>
+    </div>
   );
 };
 

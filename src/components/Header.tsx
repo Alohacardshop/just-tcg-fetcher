@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Sparkles, Github, LogOut, User, Package, Clock, Home } from "lucide-react";
+import { Sparkles, Github, LogOut, User, Package, Clock, Home, Database } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { Link, useLocation } from "react-router-dom";
 
@@ -51,6 +51,15 @@ export const Header = () => {
               >
                 <Clock className="h-4 w-4" />
                 Automation
+              </Link>
+              <Link
+                to="/data"
+                className={`text-sm font-medium transition-colors hover:text-primary flex items-center gap-1 ${
+                  location.pathname === '/data' ? 'text-primary' : 'text-muted-foreground'
+                }`}
+              >
+                <Database className="h-4 w-4" />
+                Data Manager
               </Link>
             </nav>
           </div>

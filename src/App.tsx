@@ -8,6 +8,7 @@ import { ThemeProvider } from "next-themes";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ApiInspector } from "./components/ApiInspector";
+import { MainLayout } from "./components/layout/MainLayout";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import HarvestManager from "./pages/HarvestManager";
@@ -29,13 +30,14 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
             <Routes>
-              <Route path="/" element={<Index />} />
               <Route path="/auth" element={<Auth />} />
-              <Route path="/harvest" element={<HarvestManager />} />
-              <Route path="/automation" element={<AutomationSettings />} />
-              <Route path="/data" element={<DataManager />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
+              <Route element={<MainLayout />}>
+                <Route path="/" element={<Index />} />
+                <Route path="/harvest" element={<HarvestManager />} />
+                <Route path="/automation" element={<AutomationSettings />} />
+                <Route path="/data" element={<DataManager />} />
+                <Route path="*" element={<NotFound />} />
+              </Route>
             </Routes>
           </BrowserRouter>
           <ApiInspector />

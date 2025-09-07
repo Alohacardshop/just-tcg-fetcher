@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AppLayout } from '@/components/layout/AppLayout';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TcgCsvSyncV2 } from '@/components/TcgCsvSyncV2';
@@ -126,8 +126,8 @@ const DataManager = () => {
   }, [selectedOperationId]);
 
   return (
-    <AppLayout>
-      <div className="space-y-8 animate-fade-in">
+    <div className="container mx-auto p-8 space-y-8 animate-fade-in max-w-7xl">
+      <div className="space-y-8">
         {/* Header Section */}
         <div className="relative overflow-hidden rounded-2xl bg-gradient-primary p-8 shadow-glow">
           <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-transparent" />
@@ -549,7 +549,7 @@ const DataManager = () => {
           </TabsContent>
         </Tabs>
       </div>
-    </AppLayout>
+    </div>
   );
 };
 
