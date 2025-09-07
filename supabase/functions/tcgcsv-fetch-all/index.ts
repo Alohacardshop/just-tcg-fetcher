@@ -1,0 +1,304 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import pLimit from 'https://esm.sh/p-limit@5'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+interface TcgCsvGroup {
+  groupId: number
+  name: string
+  slug?: string
+  publishedOn: string
+  modifiedOn: string
+}
+
+interface TcgCsvProduct {
+  productId: number
+  name: string
+  cleanName: string
+  imageUrl?: string
+  url?: string
+  number?: string
+  groupId: number
+}
+
+async function fetchWithRetry(url: string, retries = 3, delay = 1000): Promise<any> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      console.log(`Fetching: ${url} (attempt ${i + 1}/${retries})`)
+      const response = await fetch(url)
+      
+      if (response.status === 429) {
+        const waitTime = delay * Math.pow(2, i) + Math.random() * 1000 // Exponential backoff with jitter
+        console.log(`Rate limited, waiting ${waitTime}ms`)
+        await new Promise(resolve => setTimeout(resolve, waitTime))
+        continue
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+      
+      return await response.json()
+    } catch (error) {
+      console.error(`Attempt ${i + 1} failed:`, error)
+      if (i === retries - 1) throw error
+      const waitTime = delay * Math.pow(2, i) + Math.random() * 1000
+      await new Promise(resolve => setTimeout(resolve, waitTime))
+    }
+  }
+}
+
+function parseCardNumber(productName: string): string | null {
+  // Extract card numbers like "123/165", "SVP-001", "PROMO-001", etc.
+  const patterns = [
+    /\b(\d{1,4}\/\d{1,4})\b/, // Standard format like 123/165
+    /\b([A-Z]{2,4}[-_]?\d{1,4})\b/, // Promo formats like SVP-001, PROMO-001
+    /\b(#\d{1,4})\b/, // Hash numbers like #123
+    /\b(\d{1,4}[A-Z]?)\b(?=\s|$)/ // Simple numbers at word boundaries
+  ]
+  
+  for (const pattern of patterns) {
+    const match = productName.match(pattern)
+    if (match) {
+      return match[1].replace(/[-_]/g, '-') // Normalize separators
+    }
+  }
+  
+  return null
+}
+
+function selectBestImageUrl(imageUrl: string | undefined): string | null {
+  if (!imageUrl) return null
+  
+  // Prefer larger images if multiple sizes are available
+  // TCGCSV often provides URLs with size parameters
+  if (imageUrl.includes('200w')) {
+    return imageUrl.replace('200w', '400w')
+  }
+  
+  return imageUrl
+}
+
+async function logToSyncLogs(supabase: any, operationId: string, status: string, message: string, details?: any) {
+  await supabase.from('sync_logs').insert({
+    operation_id: operationId,
+    operation_type: 'tcgcsv-fetch-all',
+    status,
+    message,
+    details
+  })
+}
+
+async function upsertGroups(supabase: any, groups: any[], gameId: string, categoryId: string, operationId: string) {
+  const batchSize = 100
+  let totalUpserted = 0
+  
+  for (let i = 0; i < groups.length; i += batchSize) {
+    const batch = groups.slice(i, i + batchSize)
+    const records = batch.map(group => ({
+      group_id: group.groupId.toString(),
+      category_id: categoryId,
+      game_id: gameId,
+      name: group.name,
+      slug: group.slug || null,
+      release_date: group.publishedOn ? new Date(group.publishedOn).toISOString().split('T')[0] : null,
+      data: group
+    }))
+    
+    const { error } = await supabase
+      .from('tcgcsv_groups')
+      .upsert(records, { onConflict: 'group_id' })
+    
+    if (error) {
+      console.error('Error upserting groups batch:', error)
+      throw error
+    }
+    
+    totalUpserted += batch.length
+    console.log(`Upserted ${totalUpserted}/${groups.length} groups`)
+  }
+  
+  await logToSyncLogs(supabase, operationId, 'progress', `Upserted ${totalUpserted} groups`)
+  return totalUpserted
+}
+
+async function upsertProducts(supabase: any, products: any[], gameId: string, categoryId: string, operationId: string) {
+  const batchSize = 200
+  let totalUpserted = 0
+  
+  for (let i = 0; i < products.length; i += batchSize) {
+    const batch = products.slice(i, i + batchSize)
+    const records = batch.map(product => ({
+      product_id: product.productId.toString(),
+      group_id: product.groupId.toString(),
+      category_id: categoryId,
+      game_id: gameId,
+      name: product.name,
+      number: parseCardNumber(product.name),
+      url: product.url || null,
+      image_url: selectBestImageUrl(product.imageUrl),
+      data: product
+    }))
+    
+    const { error } = await supabase
+      .from('tcgcsv_products')
+      .upsert(records, { onConflict: 'product_id' })
+    
+    if (error) {
+      console.error('Error upserting products batch:', error)
+      throw error
+    }
+    
+    totalUpserted += batch.length
+    
+    if (totalUpserted % 1000 === 0 || i + batchSize >= products.length) {
+      console.log(`Upserted ${totalUpserted}/${products.length} products`)
+      await logToSyncLogs(supabase, operationId, 'progress', `Upserted ${totalUpserted}/${products.length} products`)
+    }
+  }
+  
+  return totalUpserted
+}
+
+async function fetchAllData(gameId: string, categoryId: string, operationId: string, wipeBefore: boolean, supabase: any) {
+  try {
+    // Wipe existing data if requested
+    if (wipeBefore) {
+      await logToSyncLogs(supabase, operationId, 'progress', 'Wiping existing TCGCSV data for game')
+      await supabase.from('tcgcsv_products').delete().eq('game_id', gameId)
+      await supabase.from('tcgcsv_groups').delete().eq('game_id', gameId)
+    }
+    
+    // Fetch all groups
+    await logToSyncLogs(supabase, operationId, 'progress', 'Fetching TCGCSV groups')
+    const groupsUrl = `https://tcgcsv.com/tcgplayer/${categoryId}/groups`
+    const groupsData = await fetchWithRetry(groupsUrl)
+    
+    if (!Array.isArray(groupsData)) {
+      throw new Error('Groups data is not an array')
+    }
+    
+    console.log(`Found ${groupsData.length} groups`)
+    const groupsUpserted = await upsertGroups(supabase, groupsData, gameId, categoryId, operationId)
+    
+    // Fetch products for each group with concurrency control
+    await logToSyncLogs(supabase, operationId, 'progress', 'Fetching TCGCSV products for all groups')
+    const limit = pLimit(8) // Limit concurrent requests
+    let allProducts: any[] = []
+    let processedGroups = 0
+    
+    const productPromises = groupsData.map(group => 
+      limit(async () => {
+        try {
+          const productsUrl = `https://tcgcsv.com/tcgplayer/${categoryId}/${group.groupId}/products`
+          const productsData = await fetchWithRetry(productsUrl)
+          
+          if (Array.isArray(productsData)) {
+            // Add groupId to each product
+            const productsWithGroup = productsData.map(product => ({
+              ...product,
+              groupId: group.groupId
+            }))
+            allProducts.push(...productsWithGroup)
+            
+            processedGroups++
+            if (processedGroups % 10 === 0) {
+              console.log(`Processed ${processedGroups}/${groupsData.length} groups`)
+            }
+          }
+        } catch (error) {
+          console.error(`Error fetching products for group ${group.groupId}:`, error)
+          // Continue with other groups instead of failing entirely
+        }
+      })
+    )
+    
+    await Promise.all(productPromises)
+    
+    console.log(`Found ${allProducts.length} total products`)
+    const productsUpserted = await upsertProducts(supabase, allProducts, gameId, categoryId, operationId)
+    
+    await logToSyncLogs(supabase, operationId, 'completed', 'TCGCSV fetch completed successfully', {
+      groupsUpserted,
+      productsUpserted,
+      categoryId,
+      gameId,
+      wipeBefore
+    })
+    
+    return {
+      success: true,
+      groupsUpserted,
+      productsUpserted,
+      message: `Successfully fetched ${groupsUpserted} groups and ${productsUpserted} products`
+    }
+    
+  } catch (error) {
+    console.error('Error in fetchAllData:', error)
+    await logToSyncLogs(supabase, operationId, 'error', `Fetch failed: ${error.message}`, { error: error.message })
+    throw error
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    const { gameId, categoryId, wipeBefore = false, background = false } = await req.json()
+
+    if (!gameId || !categoryId) {
+      return new Response(
+        JSON.stringify({ error: 'gameId and categoryId are required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabaseKey)
+
+    const operationId = `tcgcsv-fetch-${gameId}-${Date.now()}`
+    
+    await logToSyncLogs(supabase, operationId, 'started', `Starting TCGCSV fetch for game ${gameId}`, {
+      gameId,
+      categoryId,
+      wipeBefore,
+      background
+    })
+
+    if (background) {
+      // Start background task and return immediately
+      EdgeRuntime.waitUntil(fetchAllData(gameId, categoryId, operationId, wipeBefore, supabase))
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: 'TCGCSV fetch started in background',
+          operationId 
+        }),
+        { status: 202, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    } else {
+      // Run synchronously
+      const result = await fetchAllData(gameId, categoryId, operationId, wipeBefore, supabase)
+      
+      return new Response(
+        JSON.stringify(result),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+  } catch (error) {
+    console.error('Error in tcgcsv-fetch-all:', error)
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+})

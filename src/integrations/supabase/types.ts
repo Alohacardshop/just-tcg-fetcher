@@ -476,6 +476,84 @@ export type Database = {
           },
         ]
       }
+      tcgcsv_groups: {
+        Row: {
+          category_id: string
+          created_at: string
+          data: Json | null
+          game_id: string
+          group_id: string
+          name: string
+          release_date: string | null
+          slug: string | null
+          updated_at: string
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          data?: Json | null
+          game_id: string
+          group_id: string
+          name: string
+          release_date?: string | null
+          slug?: string | null
+          updated_at?: string
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          data?: Json | null
+          game_id?: string
+          group_id?: string
+          name?: string
+          release_date?: string | null
+          slug?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      tcgcsv_products: {
+        Row: {
+          category_id: string
+          created_at: string
+          data: Json | null
+          game_id: string
+          group_id: string
+          image_url: string | null
+          name: string
+          number: string | null
+          product_id: string
+          updated_at: string
+          url: string | null
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          data?: Json | null
+          game_id: string
+          group_id: string
+          image_url?: string | null
+          name: string
+          number?: string | null
+          product_id: string
+          updated_at?: string
+          url?: string | null
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          data?: Json | null
+          game_id?: string
+          group_id?: string
+          image_url?: string | null
+          name?: string
+          number?: string | null
+          product_id?: string
+          updated_at?: string
+          url?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
