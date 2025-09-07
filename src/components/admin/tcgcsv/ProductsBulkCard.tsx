@@ -53,6 +53,7 @@ export const ProductsBulkCard = () => {
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [showRawResponse, setShowRawResponse] = useState(false);
   const [authStatus, setAuthStatus] = useState<any>(null);
+  const [sequentialMode, setSequentialMode] = useState(false);
 
   const { categories, loading: categoriesLoading } = useCategories();
   const { groups, loading: groupsLoading } = useGroups(
@@ -89,7 +90,7 @@ export const ProductsBulkCard = () => {
     setSyncLoading(true);
 
     try {
-      const payload: any = {
+      const basePayload: any = {
         categoryId: Number(selectedCategoryId),
         includeSealed,
         includeSingles,
@@ -97,41 +98,93 @@ export const ProductsBulkCard = () => {
       };
 
       if (selectedGroupIds.length > 0) {
-        payload.groupIds = selectedGroupIds.map(id => Number(id));
+        basePayload.groupIds = selectedGroupIds.map(id => Number(id));
       }
-      
-      console.log('Invoking bulk function:', { 
-        fn: 'sync-tcgcsv-products-csv-bulk', 
-        payload, 
-        timestamp: new Date().toISOString() 
-      });
 
-      const { data, error, status } = await invokeFn<BulkSyncResult>('sync-tcgcsv-products-csv-bulk', payload);
-      setLastResult(data || null);
-      
-      console.log('Bulk function response:', { 
-        fn: 'sync-tcgcsv-products-csv-bulk', 
-        status, 
-        success: data?.success,
-        summary: data?.summary
-      });
+      if (sequentialMode) {
+        // One-by-one: pageSize=1, iterate pages
+        let page = 1;
+        const pageSize = 1;
+        let aggregate: BulkSyncResult | null = null;
+        let totalFetched = 0, totalUpserted = 0, totalSkipped = 0;
+        const perGroup: BulkSyncResult['perGroup'] = [];
+        let groupsProcessed = 0;
+        let totalGroups = 0;
 
-      // Handle auth errors
-      if (status === 401 || error?.authError) {
-        toast({
-          title: "Authentication required",
-          description: "Your session has expired. Please sign in and try again.",
-          variant: "destructive",
-        });
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const payload = { ...basePayload, page, pageSize };
+          console.log('Invoking bulk function (sequential):', { fn: 'sync-tcgcsv-products-csv-bulk', payload });
+          const { data, error, status } = await invokeFn<BulkSyncResult>('sync-tcgcsv-products-csv-bulk', payload);
+
+          if (status === 401 || error?.authError) {
+            toast({ title: "Authentication required", description: "Your session has expired. Please sign in and try again.", variant: "destructive" });
+            break;
+          }
+          if (!data?.success) {
+            toast({ title: `Page ${page} failed`, description: data?.error || error?.message || 'Unknown error', variant: "destructive" });
+            break;
+          }
+
+          // Merge results
+          totalFetched += data.summary?.fetched || 0;
+          totalUpserted += data.summary?.upserted || 0;
+          totalSkipped += data.summary?.skipped || 0;
+          groupsProcessed += data.groupsProcessed || 0;
+          if ((data as any).pagination?.totalGroups) {
+            totalGroups = (data as any).pagination.totalGroups;
+          }
+          if (Array.isArray(data.perGroup)) perGroup.push(...data.perGroup);
+
+          aggregate = {
+            success: true,
+            categoryId: basePayload.categoryId,
+            groupsProcessed,
+            groupIdsResolved: perGroup.map(g => g.groupId),
+            summary: {
+              fetched: totalFetched,
+              upserted: totalUpserted,
+              skipped: totalSkipped,
+              rateRPS: 0,
+              rateUPS: 0,
+            },
+            perGroup,
+            dryRun: isDryRun,
+            operationId: data.operationId,
+          };
+
+          setLastResult(aggregate);
+
+          const pagination = (data as any).pagination;
+          if (!pagination?.hasMore || !pagination?.nextPage) break;
+          page = pagination.nextPage;
+        }
+
+        if (aggregate) {
+          const totalUp = aggregate.summary.upserted || 0;
+          if (totalUp === 0) {
+            toast({ title: "No products synced", description: totalGroups ? `Processed 0 of ${totalGroups} groups` : 'No data', variant: 'destructive' });
+          } else {
+            toast({ title: isDryRun ? 'Preview completed' : 'Sequential sync completed', description: `${formatNumber(totalUp)} products across ${groupsProcessed} sets (one-by-one)` });
+          }
+        }
+
+        // Refresh auth status
+        checkAuthStatus().then(setAuthStatus);
         return;
       }
 
+      // Default: single call (page-based or full, as configured server-side)
+      const { data, error, status } = await invokeFn<BulkSyncResult>('sync-tcgcsv-products-csv-bulk', basePayload);
+      setLastResult(data || null);
+      console.log('Bulk function response:', { fn: 'sync-tcgcsv-products-csv-bulk', status, success: data?.success, summary: data?.summary });
+
+      if (status === 401 || error?.authError) {
+        toast({ title: "Authentication required", description: "Your session has expired. Please sign in and try again.", variant: "destructive" });
+        return;
+      }
       if (!data?.success) {
-        toast({
-          title: "Bulk sync failed",
-          description: data?.error || error?.message || 'Unknown error occurred',
-          variant: "destructive",
-        });
+        toast({ title: "Bulk sync failed", description: data?.error || error?.message || 'Unknown error occurred', variant: "destructive" });
         return;
       }
 
@@ -144,34 +197,20 @@ export const ProductsBulkCard = () => {
         if (groupsProcessed === 0) {
           description = "No groups found for the specified criteria";
         }
-        
-        toast({
-          title: "No products synced",
-          description,
-          variant: "destructive",
-        });
+        toast({ title: "No products synced", description, variant: "destructive" });
       } else {
         const dryRunText = isDryRun ? ' (Preview only)' : '';
         const rateText = summary.rateRPS ? ` • ${summary.rateRPS} rows/sec` : '';
         const upsertRateText = summary.rateUPS ? ` • ${summary.rateUPS} upserts/sec` : '';
-        
-        toast({ 
-          title: isDryRun ? "Preview completed" : "Bulk sync completed", 
-          description: `${formatNumber(totalUpserted)} products across ${groupsProcessed} sets (CSV)${dryRunText}${rateText}${upsertRateText}` 
-        });
+        toast({ title: isDryRun ? "Preview completed" : "Bulk sync completed", description: `${formatNumber(totalUpserted)} products across ${groupsProcessed} sets (CSV)${dryRunText}${rateText}${upsertRateText}` });
       }
-      
+
       // Refresh auth status
       checkAuthStatus().then(setAuthStatus);
 
     } catch (error: any) {
       console.error('Bulk sync error:', error);
-      
-      toast({
-        title: "Network error",
-        description: error.message || "Failed to perform bulk sync",
-        variant: "destructive",
-      });
+      toast({ title: "Network error", description: error.message || "Failed to perform bulk sync", variant: "destructive" });
     } finally {
       setSyncLoading(false);
     }
@@ -315,6 +354,23 @@ export const ProductsBulkCard = () => {
           </div>
         </div>
 
+        {/* Execution Mode */}
+        <div className="space-y-2">
+          <Label>Execution Mode</Label>
+          <div className="flex items-center space-x-2">
+            <Checkbox 
+              id="sequentialMode" 
+              checked={sequentialMode}
+              onCheckedChange={(checked) => setSequentialMode(checked as boolean)}
+              disabled={syncLoading}
+            />
+            <Label htmlFor="sequentialMode">Sequential (one group at a time)</Label>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Safer for large categories. Uses server pagination (pageSize=1).
+          </div>
+        </div>
+
         {/* Action Buttons */}
         <div className="flex items-center gap-4">
           <Button 
@@ -365,7 +421,7 @@ export const ProductsBulkCard = () => {
             </div>
             <Progress value={undefined} className="w-full" />
             <div className="text-xs text-muted-foreground">
-              Processing with concurrency=12, batches=5k rows
+              {sequentialMode ? 'Sequential mode: processing one group per request' : 'Bulk mode: server-controlled concurrency and batching'}
             </div>
           </div>
         )}
