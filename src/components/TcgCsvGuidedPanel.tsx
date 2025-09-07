@@ -94,8 +94,8 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
   const steps = [
     {
       id: 'select-category',
-      title: 'Select Category (Group)',
-      description: 'Choose Magic, Pokémon, etc.',
+      title: 'Select Category',
+      description: 'Choose Magic, Pokémon, etc. (top-level game)',
       completed: !!selectedCategoryId,
       isLoading: false,
       canStart: true as boolean,
@@ -104,8 +104,8 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
     },
     {
       id: 'fetch-groups',
-      title: 'Fetch Sets (TCGCSV Groups)',
-      description: 'Pull all sets for the selected category',
+      title: 'Fetch Groups (Sets)',
+      description: 'Pull all sets/expansions for the category',
       completed: stats ? stats.groupsCount > 0 : false,
       isLoading: fetchGroupsMutation.isPending,
       canStart: !!selectedCategoryId,
@@ -114,8 +114,8 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
     },
     {
       id: 'fetch-products',
-      title: 'Fetch Cards (TCGCSV Products)',
-      description: 'Pull products for each set',
+      title: 'Fetch Products (Cards)',
+      description: 'Pull individual cards for each set',
       completed: stats ? stats.productsCount > 0 : false,
       isLoading: fetchProductsMutation.isPending,
       canStart: stats ? stats.groupsCount > 0 : false,
@@ -138,7 +138,7 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
           Guided Sync (TCGCSV)
         </CardTitle>
         <CardDescription>
-          Correct order: Category (Magic/Pokémon) → Sets (Groups) → Cards (Products)
+          TCGCSV Structure: Category (Pokémon/Magic) → Groups (Base Set, Jungle) → Products (Pikachu #25)
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -206,11 +206,11 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
                   <div className="grid grid-cols-2 gap-4 text-center">
                     <div>
                       <div className="text-lg font-bold text-blue-600">{stats.groupsCount}</div>
-                      <div className="text-xs text-muted-foreground">Sets (Groups)</div>
+                      <div className="text-xs text-muted-foreground">Groups (Sets)</div>
                     </div>
                     <div>
                       <div className="text-lg font-bold">{stats.productsCount}</div>
-                      <div className="text-xs text-muted-foreground">Cards (Products)</div>
+                      <div className="text-xs text-muted-foreground">Products (Cards)</div>
                     </div>
                   </div>
                 </CardContent>
