@@ -9,7 +9,7 @@ function cors(req: Request) {
   return {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'authorization,apikey,content-type',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Vary': 'Origin'
   };
 }
@@ -93,7 +93,8 @@ async function fetchAndParseCategories(operationId: string, supabase: any) {
         'Accept': 'text/csv, */*',
         'Accept-Encoding': 'gzip, deflate, br',
         'Cache-Control': 'no-cache',
-        'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)'
+        'User-Agent': 'AlohaCardShopBot/1.0 (+https://www.alohacardshop.com)',
+        'Referer': 'https://tcgcsv.com/'
       },
       signal: controller.signal
     });
