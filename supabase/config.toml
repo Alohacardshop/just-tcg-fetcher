@@ -52,5 +52,8 @@ verify_jwt = false
 [functions.sync-tcgcsv-products-csv-bulk]
 verify_jwt = false
 
+[functions.sync-tcgcsv-groups-csv]
+verify_jwt = false
+
 [functions.test-tcgcsv-url]
 verify_jwt = false
