@@ -41,7 +41,7 @@ const kebab = (s: string) =>
   String(s || '').toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 
 async function fetchAndParseGroups(categoryId: number, operationId: string, supabase: any) {
-  const url = `https://tcgcsv.com/tcgplayer/${categoryId}/groups.csv`;
+  const url = `https://tcgcsv.com/tcgplayer/${categoryId}/Groups.csv`;
   let attempt = 0;
   const maxAttempts = 3;
   
