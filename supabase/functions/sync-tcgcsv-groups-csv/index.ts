@@ -193,7 +193,7 @@ async function fetchAndParseGroups(categoryId: number, operationId: string, supa
       const releaseDateIdx = headers.findIndex(h => h.includes('releasedate') || h.includes('release_date'));
       const isSupplementalIdx = headers.findIndex(h => h.includes('issupplemental') || h.includes('is_supplemental'));
       const sealedProductIdx = headers.findIndex(h => h.includes('sealedproduct') || h.includes('sealed_product'));
-      const popularityIdx = headers.findIndex(h => h.includes('popularity'));
+      const slugIdx = headers.findIndex(h => h.includes('slug'));
       const slugIdx = headers.findIndex(h => h.includes('slug'));
 
       if (groupIdIdx === -1 || nameIdx === -1) {
@@ -233,7 +233,7 @@ async function fetchAndParseGroups(categoryId: number, operationId: string, supa
           release_date: releaseDateIdx >= 0 ? cols[releaseDateIdx] || null : null,
           is_supplemental: isSupplementalIdx >= 0 ? toBool(cols[isSupplementalIdx]) : null,
           sealed_product: sealedProductIdx >= 0 ? toBool(cols[sealedProductIdx]) : null,
-          popularity: popularityIdx >= 0 ? Number(cols[popularityIdx]) || null : null,
+          url_slug: slugIdx >= 0 ? cols[slugIdx] || kebab(name) : kebab(name),
           url_slug: slugIdx >= 0 ? cols[slugIdx] || kebab(name) : kebab(name),
           updated_at: new Date().toISOString()
         });
