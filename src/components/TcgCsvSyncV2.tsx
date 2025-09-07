@@ -21,6 +21,8 @@ interface Category {
   category_id: string;
   name: string;
   data: any;
+  groupsCount: number;
+  productsCount: number;
 }
 
 interface Group {
@@ -74,17 +76,48 @@ export const TcgCsvSyncV2 = () => {
     },
   });
 
-  // Fetch categories
+  // Fetch categories with stats
   const { data: categories, isLoading: categoriesLoading, refetch: refetchCategories } = useQuery({
-    queryKey: ['tcgcsv-categories'],
+    queryKey: ['tcgcsv-categories-with-stats'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data: categoriesData, error: categoriesError } = await supabase
         .from('tcgcsv_categories')
         .select('id, category_id, name, data')
         .order('name');
       
-      if (error) throw error;
-      return data || [];
+      if (categoriesError) throw categoriesError;
+
+      // Get groups count for each category
+      const { data: groupsData, error: groupsError } = await supabase
+        .from('tcgcsv_groups')
+        .select('tcgcsv_category_id');
+        
+      if (groupsError) throw groupsError;
+
+      // Get products count for each category  
+      const { data: productsData, error: productsError } = await supabase
+        .from('tcgcsv_products')
+        .select('category_id');
+        
+      if (productsError) throw productsError;
+
+      // Count groups and products per category
+      const groupCounts = groupsData?.reduce((acc, group) => {
+        acc[group.tcgcsv_category_id] = (acc[group.tcgcsv_category_id] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>) || {};
+
+      const productCounts = productsData?.reduce((acc, product) => {
+        acc[product.category_id] = (acc[product.category_id] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>) || {};
+
+      // Combine data with stats
+      return categoriesData?.map(category => ({
+        ...category,
+        groupsCount: groupCounts[category.category_id] || 0,
+        productsCount: productCounts[category.category_id] || 0
+      })) || [];
     },
   });
 
@@ -158,8 +191,9 @@ export const TcgCsvSyncV2 = () => {
     },
     onSuccess: (data) => {
       setFetchResult(data);
-      // Refetch all data
-      queryClient.invalidateQueries();
+      // Refetch all data to update stats
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-groups'] });
       toast({
         title: "Fetch Successful",
         description: data.message || 'Data fetched successfully',
@@ -240,12 +274,15 @@ export const TcgCsvSyncV2 = () => {
         <CardContent>
           <div className="flex gap-4 mb-6">
             <Button 
-              onClick={() => fetchMutation.mutate({ fetchType: 'categories' })}
-              disabled={fetchMutation.isPending}
+              onClick={() => {
+                refetchCategories();
+                fetchMutation.mutate({ fetchType: 'categories' });
+              }}
+              disabled={fetchMutation.isPending || categoriesLoading}
               variant="outline"
               className="flex items-center gap-2"
             >
-              <RefreshCw className={`h-4 w-4 ${fetchMutation.isPending ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`h-4 w-4 ${(fetchMutation.isPending || categoriesLoading) ? 'animate-spin' : ''}`} />
               Refresh Categories
             </Button>
             
@@ -277,12 +314,42 @@ export const TcgCsvSyncV2 = () => {
                     className="pl-10"
                   />
                 </div>
-                <Button variant="outline" size="sm" onClick={handleSelectAll}>
-                  Select All ({filteredCategories.length})
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleDeselectAll}>
-                  Clear ({selectedCategories.length})
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={handleSelectAll}>
+                    Select All ({filteredCategories.length})
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleDeselectAll}>
+                    Clear ({selectedCategories.length})
+                  </Button>
+                </div>
+              </div>
+
+              {/* Data Overview */}
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                <Card className="p-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">
+                      {categories?.filter(c => c.groupsCount > 0 && c.productsCount > 0).length || 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Complete Categories</div>
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-yellow-600">
+                      {categories?.filter(c => c.groupsCount > 0 || c.productsCount > 0).length || 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">With Some Data</div>
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold">
+                      {categories?.reduce((sum, c) => sum + c.productsCount, 0) || 0}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Total Products</div>
+                  </div>
+                </Card>
               </div>
 
               {/* Selected Categories Actions */}
@@ -325,36 +392,59 @@ export const TcgCsvSyncV2 = () => {
                 </Card>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredCategories.map((category) => (
-                    <Card 
-                      key={category.id} 
-                      className={`cursor-pointer transition-colors hover:shadow-md ${
-                        selectedCategories.includes(category.category_id) 
-                          ? 'bg-primary/10 border-primary shadow-md' 
-                          : 'hover:bg-muted/50'
-                      }`}
-                      onClick={() => handleCategoryToggle(category.category_id)}
-                    >
-                      <CardContent className="pt-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h3 className="font-medium text-sm leading-tight">{category.name}</h3>
-                            <p className="text-xs text-muted-foreground mt-1">ID: {category.category_id}</p>
-                            {category.data && typeof category.data === 'object' && 'popularity' in category.data && (
-                              <Badge variant="secondary" className="mt-2 text-xs">
-                                Popularity: {(category.data as any).popularity}
-                              </Badge>
-                            )}
+                  {filteredCategories.map((category) => {
+                    const hasData = category.groupsCount > 0 || category.productsCount > 0;
+                    const isComplete = category.groupsCount > 0 && category.productsCount > 0;
+                    
+                    return (
+                      <Card 
+                        key={category.id} 
+                        className={`cursor-pointer transition-all hover:shadow-md ${
+                          selectedCategories.includes(category.category_id) 
+                            ? 'bg-primary/10 border-primary shadow-md' 
+                            : 'hover:bg-muted/50'
+                        } ${isComplete ? 'border-green-200 bg-green-50/50' : hasData ? 'border-yellow-200 bg-yellow-50/50' : ''}`}
+                        onClick={() => handleCategoryToggle(category.category_id)}
+                      >
+                        <CardContent className="pt-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-medium text-sm leading-tight">{category.name}</h3>
+                                {isComplete && <Badge variant="default" className="text-xs bg-green-600">✓</Badge>}
+                                {hasData && !isComplete && <Badge variant="secondary" className="text-xs bg-yellow-600">Partial</Badge>}
+                                {!hasData && <Badge variant="outline" className="text-xs">No Data</Badge>}
+                              </div>
+                              <p className="text-xs text-muted-foreground">ID: {category.category_id}</p>
+                              
+                              {/* Stats */}
+                              <div className="flex gap-3 mt-2 text-xs">
+                                <div className={`flex items-center gap-1 ${category.groupsCount > 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                  <span className="w-2 h-2 rounded-full bg-current"></span>
+                                  {category.groupsCount} sets
+                                </div>
+                                <div className={`flex items-center gap-1 ${category.productsCount > 0 ? 'text-blue-600' : 'text-muted-foreground'}`}>
+                                  <span className="w-2 h-2 rounded-full bg-current"></span>
+                                  {category.productsCount} cards
+                                </div>
+                              </div>
+                              
+                              {category.data && typeof category.data === 'object' && 'popularity' in category.data && (
+                                <Badge variant="secondary" className="mt-2 text-xs">
+                                  Popularity: {(category.data as any).popularity}
+                                </Badge>
+                              )}
+                            </div>
+                            <Checkbox
+                              checked={selectedCategories.includes(category.category_id)}
+                              onChange={() => {}}
+                              className="ml-2"
+                            />
                           </div>
-                          <Checkbox
-                            checked={selectedCategories.includes(category.category_id)}
-                            onChange={() => {}}
-                            className="ml-2"
-                          />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               )}
 
