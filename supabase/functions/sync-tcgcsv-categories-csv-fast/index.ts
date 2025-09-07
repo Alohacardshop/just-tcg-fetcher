@@ -129,16 +129,13 @@ async function fetchAndParseCategories(operationId: string, supabase: any) {
       // Process rows as they arrive
       for (const row of rows) {
         const categoryIdCol = Object.keys(row).find(k => 
-          k.includes('categoryid') || k.includes('category_id')
+          k === 'categoryid' || k === 'category_id' || k === 'categoryId'
         );
         const nameCol = Object.keys(row).find(k => 
-          k.includes('categoryname') || k.includes('name')
+          k === 'name'
         );
         const displayNameCol = Object.keys(row).find(k => 
-          k.includes('displayname') || k.includes('display_name')
-        );
-        const seoNameCol = Object.keys(row).find(k => 
-          k.includes('seocategoryname') || k.includes('seo_name')
+          k === 'displayname' || k === 'display_name' || k === 'displayName'
         );
         
         if (!categoryIdCol || !nameCol) {
@@ -168,10 +165,10 @@ async function fetchAndParseCategories(operationId: string, supabase: any) {
     for (const row of finalRows) {
       // Same processing logic as above
       const categoryIdCol = Object.keys(row).find(k => 
-        k.includes('categoryid') || k.includes('category_id')
+        k === 'categoryid' || k === 'category_id' || k === 'categoryId'
       );
       const nameCol = Object.keys(row).find(k => 
-        k.includes('categoryname') || k.includes('name')
+        k === 'name'
       );
       
       if (categoryIdCol && nameCol) {
