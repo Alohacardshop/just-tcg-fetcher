@@ -311,17 +311,6 @@ async function fetchAndParseProducts(
         }
       }
     }
-            url_slug: kebab(name),
-            extended_data: null,
-            updated_at: new Date().toISOString()
-          });
-        } else {
-          skipped++;
-        }
-      } else {
-        skipped++;
-      }
-    }
     
     const totalTime = Date.now() - startTime;
     
