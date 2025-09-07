@@ -256,7 +256,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      test_tcgcsv_url_direct: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          first_100_chars: string
+          headers: Json
+          line_count: number
+          response_size: number
+          url: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
