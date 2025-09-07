@@ -73,10 +73,20 @@ async function logToSyncLogs(supabase: any, operationId: string, status: string,
 async function fetchCategories(supabase: any, operationId: string): Promise<void> {
   await logToSyncLogs(supabase, operationId, 'info', 'Starting to fetch TCGCSV categories');
   
-  const categories = await fetchWithRetry('https://tcgcsv.com/tcgplayer/categories');
+  const response = await fetchWithRetry('https://tcgcsv.com/tcgplayer/categories');
   
-  if (!Array.isArray(categories)) {
-    throw new Error('Categories response is not an array');
+  await logToSyncLogs(supabase, operationId, 'info', `Categories response type: ${typeof response}`, { response });
+  
+  // Handle different response formats
+  let categories;
+  if (Array.isArray(response)) {
+    categories = response;
+  } else if (response && response.results && Array.isArray(response.results)) {
+    categories = response.results;
+  } else if (response && response.data && Array.isArray(response.data)) {
+    categories = response.data;
+  } else {
+    throw new Error(`Unexpected categories response format. Got: ${JSON.stringify(response).substring(0, 200)}`);
   }
   
   await logToSyncLogs(supabase, operationId, 'info', `Fetched ${categories.length} categories`);
@@ -84,9 +94,9 @@ async function fetchCategories(supabase: any, operationId: string): Promise<void
   // Upsert categories
   for (const cat of categories) {
     const categoryData = {
-      category_id: cat.categoryId.toString(),
-      name: cat.name || cat.displayName,
-      slug: cat.slug,
+      category_id: (cat.categoryId || cat.id || cat.category_id).toString(),
+      name: cat.name || cat.displayName || cat.title,
+      slug: cat.slug || cat.seoCategoryName || null,
       data: cat
     };
     
@@ -101,10 +111,18 @@ async function fetchCategories(supabase: any, operationId: string): Promise<void
 async function fetchGroups(supabase: any, categoryId: string, operationId: string): Promise<void> {
   await logToSyncLogs(supabase, operationId, 'info', `Starting to fetch groups for category ${categoryId}`);
   
-  const groups = await fetchWithRetry(`https://tcgcsv.com/tcgplayer/${categoryId}/groups`);
+  const response = await fetchWithRetry(`https://tcgcsv.com/tcgplayer/${categoryId}/groups`);
   
-  if (!Array.isArray(groups)) {
-    throw new Error('Groups response is not an array');
+  // Handle different response formats
+  let groups;
+  if (Array.isArray(response)) {
+    groups = response;
+  } else if (response && response.results && Array.isArray(response.results)) {
+    groups = response.results;
+  } else if (response && response.data && Array.isArray(response.data)) {
+    groups = response.data;
+  } else {
+    throw new Error(`Unexpected groups response format for category ${categoryId}. Got: ${JSON.stringify(response).substring(0, 200)}`);
   }
   
   await logToSyncLogs(supabase, operationId, 'info', `Fetched ${groups.length} groups for category ${categoryId}`);
@@ -132,10 +150,18 @@ async function fetchGroups(supabase: any, categoryId: string, operationId: strin
 async function fetchProducts(supabase: any, categoryId: string, groupId: string, operationId: string): Promise<void> {
   await logToSyncLogs(supabase, operationId, 'info', `Starting to fetch products for category ${categoryId}, group ${groupId}`);
   
-  const products = await fetchWithRetry(`https://tcgcsv.com/tcgplayer/${categoryId}/${groupId}/products`);
+  const response = await fetchWithRetry(`https://tcgcsv.com/tcgplayer/${categoryId}/${groupId}/products`);
   
-  if (!Array.isArray(products)) {
-    throw new Error('Products response is not an array');
+  // Handle different response formats
+  let products;
+  if (Array.isArray(response)) {
+    products = response;
+  } else if (response && response.results && Array.isArray(response.results)) {
+    products = response.results;
+  } else if (response && response.data && Array.isArray(response.data)) {
+    products = response.data;
+  } else {
+    throw new Error(`Unexpected products response format for category ${categoryId}, group ${groupId}. Got: ${JSON.stringify(response).substring(0, 200)}`);
   }
   
   await logToSyncLogs(supabase, operationId, 'info', `Fetched ${products.length} products for group ${groupId}`);
