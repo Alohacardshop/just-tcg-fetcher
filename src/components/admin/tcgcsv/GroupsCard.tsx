@@ -15,15 +15,28 @@ import { useGroups } from '@/hooks/useGroups';
 import { formatRelativeTime, pluralize, truncateText } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 
+type GroupsCsvResp = {
+  success: boolean;
+  categoryId: number;
+  summary?: { fetched: number; upserted: number; skipped: number };
+  groups?: any[];
+  groupsCount?: number;
+  error?: string | null;
+  note?: string;
+  hint?: { code: string; sample?: string; headers?: Record<string, string> } | null;
+};
+
 export const GroupsCard = () => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showRawResponse, setShowRawResponse] = useState(false);
+  const [lastResponse, setLastResponse] = useState<any>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
   
   const { categories, loading: categoriesLoading } = useCategories();
   const { groups, loading: groupsLoading, refetch: refetchGroups } = useGroups(
     selectedCategoryId ? Number(selectedCategoryId) : undefined
   );
-  const { data, loading: syncLoading, invoke } = useEdgeFn('sync-tcgcsv-groups-csv');
 
   // Filter groups based on search query
   const filteredGroups = useMemo(() => {
@@ -46,12 +59,57 @@ export const GroupsCard = () => {
       return;
     }
 
+    setSyncLoading(true);
+    let controller: AbortController | null = null;
+
     try {
-      const result = await invoke({ 
-        categoryId: Number(selectedCategoryId) 
-      }, { suppressToast: true });
+      // Create timeout controller
+      controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller?.abort();
+      }, 20000); // 20s timeout
+
+      const payload = { categoryId: Number(selectedCategoryId), dryRun: false };
       
-      const count = result?.summary?.upserted ?? 0;
+      // Network logging
+      console.log('Invoking function:', { 
+        fn: 'sync-tcgcsv-groups-csv', 
+        payload, 
+        timestamp: new Date().toISOString() 
+      });
+
+      // Manual fetch with timeout
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
+      const response = await fetch(`${supabaseUrl}/functions/v1/sync-tcgcsv-groups-csv`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const result: GroupsCsvResp = await response.json();
+      setLastResponse(result);
+      
+      console.log('Function response:', { 
+        fn: 'sync-tcgcsv-groups-csv', 
+        status: response.status, 
+        success: result.success,
+        result 
+      });
+
+      // Robust count calculation
+      const count = Number.isFinite(result?.groupsCount) ? 
+        result.groupsCount : 
+        Number.isFinite(result?.summary?.upserted) ?
+        result.summary.upserted :
+        Array.isArray(result?.groups) ? result.groups.length : 0;
 
       if (!result?.success) {
         let description = `Error: ${result?.error || 'Unknown error'}`;
@@ -59,7 +117,7 @@ export const GroupsCard = () => {
           description += ` (${result.hint.code})`;
         }
         if (result?.hint?.sample) {
-          description += ` Sample: ${result.hint.sample.slice(0, 100)}...`;
+          description += ` Sample: ${result.hint.sample.slice(0, 160)}`;
         }
         
         toast({
@@ -71,7 +129,10 @@ export const GroupsCard = () => {
       }
 
       if (count === 0) {
-        const description = "No groups in CSV — try again after daily update (20:00 UTC)";
+        let description = "No rows in CSV — try again after daily update (20:00 UTC)";
+        if (result?.note) {
+          description = result.note;
+        }
         
         toast({
           title: "No groups found",
@@ -79,18 +140,36 @@ export const GroupsCard = () => {
           variant: "destructive",
         });
       } else {
-        const skippedText = result?.summary?.skipped ? ` (${result.summary.skipped} skipped)` : '';
-        
         toast({ 
           title: "Groups synced successfully", 
-          description: `Synced ${count} groups for ${categories.find(c => c.tcgcsv_category_id === Number(selectedCategoryId))?.display_name} (CSV)${skippedText}` 
+          description: `Synced ${count} groups (CSV)` 
         });
         
         // Refresh the groups list
         refetchGroups();
       }
-    } catch (error) {
-      // Error handling is done in useEdgeFn
+
+    } catch (error: any) {
+      console.error('Groups sync error:', error);
+      
+      if (error.name === 'AbortError') {
+        toast({
+          title: "Request timeout",
+          description: "Request timed out after 20s",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Network error",
+          description: error.message || "Failed to sync groups",
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setSyncLoading(false);
+      if (controller) {
+        controller.abort();
+      }
     }
   };
 
@@ -181,16 +260,26 @@ export const GroupsCard = () => {
           </div>
         )}
 
-        {/* Status */}
-        {data?.error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              {truncateText(data.error)}
-              {data.hint?.code && ` (${data.hint.code})`}
-            </AlertDescription>
-          </Alert>
+        {/* Dev Debug Section */}
+        {lastResponse && (
+          <div className="space-y-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowRawResponse(!showRawResponse)}
+              className="text-xs"
+            >
+              Show raw response
+            </Button>
+            {showRawResponse && (
+              <div className="p-3 bg-muted rounded text-xs font-mono overflow-auto max-h-40">
+                <pre>{JSON.stringify(lastResponse, null, 2)}</pre>
+              </div>
+            )}
+          </div>
         )}
+
+        {/* Status - removed since we handle errors inline now */}
 
         {/* Results Table */}
         {groupsLoading ? (
@@ -265,7 +354,7 @@ export const GroupsCard = () => {
             <AlertCircle className="h-4 w-4" />
             <AlertDescription>
               No groups found for this category.
-              {!data && " Try syncing groups first."}
+              {!lastResponse && " Try syncing groups first."}
             </AlertDescription>
           </Alert>
         ) : null}
