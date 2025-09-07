@@ -70,6 +70,8 @@ export const TcgCsvSyncV2 = () => {
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [currentOperationId, setCurrentOperationId] = useState<string>('');
   const [loadingGroupId, setLoadingGroupId] = useState<string>('');
+  const [lastMatchOperationId, setLastMatchOperationId] = useState<string | null>(null);
+  const [selectedOperationId, setSelectedOperationId] = useState<string>('');
 
   // Keep Guided Workflow in sync with Categories tab selection
   useEffect(() => {
@@ -82,6 +84,43 @@ export const TcgCsvSyncV2 = () => {
 
   // Get sync logs for current operation
   const { data: syncLogs } = useSyncLogs(currentOperationId);
+
+  // Query for recent sync operations
+  const { data: recentOperations = [] } = useQuery({
+    queryKey: ['recent-sync-operations'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('sync_logs')
+        .select('operation_id, operation_type, created_at')
+        .in('operation_type', ['tcgcsv-smart-match', 'tcgcsv-match'])
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (error) throw error;
+      return data;
+    }
+  });
+
+  // Query for match results when we have an operation ID
+  const { data: matchResults = [] } = useQuery({
+    queryKey: ['match-results', selectedOperationId],
+    queryFn: async () => {
+      if (!selectedOperationId) return [];
+      
+      const { data, error } = await supabase
+        .from('card_product_links')
+        .select(`
+          *,
+          cards!inner(name, number, sets!inner(name))
+        `)
+        .order('match_confidence', { ascending: false })
+        .limit(50);
+      
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!selectedOperationId
+  });
 
   // Fetch games
   const { data: games, isLoading: gamesLoading } = useQuery({
@@ -254,6 +293,8 @@ export const TcgCsvSyncV2 = () => {
     },
     onSuccess: (data) => {
       setMatchResult(data);
+      setLastMatchOperationId(data.operationId);
+      setSelectedOperationId(data.operationId);
       toast({
         title: "Matching Complete",
         description: dryRun 
@@ -376,11 +417,12 @@ export const TcgCsvSyncV2 = () => {
           </div>
 
           <Tabs defaultValue="workflow" className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="workflow">Guided Workflow</TabsTrigger>
               <TabsTrigger value="categories">Categories ({categories?.length || 0})</TabsTrigger>
               <TabsTrigger value="mapping">JustTCG↔TCGCSV Mapping</TabsTrigger>
               <TabsTrigger value="match">Smart Match</TabsTrigger>
+              <TabsTrigger value="matches">Matches</TabsTrigger>
               <TabsTrigger value="monitor">Monitor</TabsTrigger>
             </TabsList>
             
@@ -640,7 +682,40 @@ export const TcgCsvSyncV2 = () => {
                     Monitor data fetching progress and sync logs
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Select Operation to Monitor</label>
+                    <select 
+                      value={selectedOperationId} 
+                      onChange={(e) => setSelectedOperationId(e.target.value)}
+                      className="w-full p-2 border rounded-md"
+                    >
+                      <option value="">Select operation to view logs...</option>
+                      {recentOperations.map((op) => (
+                        <option key={op.operation_id} value={op.operation_id}>
+                          {op.operation_type} - {new Date(op.created_at).toLocaleDateString()} ({op.operation_id.slice(-8)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => window.open('https://supabase.com/dashboard/project/ljywcyhnpzqgpowwrpre/functions/tcgcsv-smart-match/logs', '_blank')}
+                    >
+                      Smart Match Logs
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => window.open('https://supabase.com/dashboard/project/ljywcyhnpzqgpowwrpre/functions/tcgcsv-match/logs', '_blank')}
+                    >
+                      Legacy Match Logs
+                    </Button>
+                  </div>
+
                   {/* Recent Sync Logs */}
                   {currentOperationId && syncLogs && syncLogs.length > 0 ? (
                     <Card>
@@ -725,6 +800,113 @@ export const TcgCsvSyncV2 = () => {
                     <Zap className="h-4 w-4" />
                     {dryRun ? 'Preview Smart Matches' : 'Execute Smart Matching'}
                   </Button>
+
+                  {matchResult && (
+                    <div className="rounded-lg border p-4 space-y-2">
+                      <h4 className="font-medium">Match Results</h4>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>Total Cards: {matchResult.stats?.total || 0}</div>
+                        <div>Matched: {matchResult.stats?.matched || 0}</div>
+                        <div>Skipped: {matchResult.stats?.skipped || 0}</div>
+                        <div>Unmatched: {matchResult.stats?.unmatched || 0}</div>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <div className="text-xs text-muted-foreground">
+                          Operation ID: {matchResult.operationId}
+                        </div>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => {
+                            setSelectedOperationId(matchResult.operationId);
+                          }}
+                        >
+                          View Detailed Results
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="matches" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Route className="h-5 w-5" />
+                    Match Results Browser
+                  </CardTitle>
+                  <CardDescription>
+                    Browse and analyze card matching results from previous operations
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Select Operation</label>
+                      <select 
+                        value={selectedOperationId} 
+                        onChange={(e) => setSelectedOperationId(e.target.value)}
+                        className="w-full p-2 border rounded-md"
+                      >
+                        <option value="">Select a matching operation...</option>
+                        {lastMatchOperationId && (
+                          <option value={lastMatchOperationId}>
+                            Latest Match ({lastMatchOperationId.slice(-8)})
+                          </option>
+                        )}
+                        {recentOperations.map((op) => (
+                          <option key={op.operation_id} value={op.operation_id}>
+                            {op.operation_type} - {new Date(op.created_at).toLocaleDateString()} ({op.operation_id.slice(-8)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedOperationId && (
+                      <div className="rounded-lg border">
+                        <div className="p-4 border-b">
+                          <h4 className="font-medium">Top Matches (by confidence)</h4>
+                          <p className="text-sm text-muted-foreground">
+                            Showing top 50 matches for operation {selectedOperationId.slice(-8)}
+                          </p>
+                        </div>
+                        
+                        <div className="max-h-96 overflow-auto">
+                          {matchResults.length > 0 ? (
+                            <div className="divide-y">
+                              {matchResults.map((match: any) => (
+                                <div key={match.id} className="p-4 space-y-2">
+                                  <div className="flex justify-between items-start">
+                                    <div className="space-y-1">
+                                      <p className="font-medium">{match.cards.name}</p>
+                                      <p className="text-sm text-muted-foreground">
+                                        {match.cards.sets.name} • #{match.cards.number}
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-sm font-medium">
+                                        {(match.match_confidence * 100).toFixed(1)}%
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">
+                                        {match.match_method}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <p className="text-sm">→ TCGCSV: {match.tcgcsv_product_id}</p>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="p-8 text-center text-muted-foreground">
+                              No matches found for this operation
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -763,14 +945,6 @@ export const TcgCsvSyncV2 = () => {
                   </Badge>
                 </div>
                 
-                {matchResult.stats && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm bg-muted/30 p-4 rounded-lg">
-                    <div><strong>Total:</strong> {matchResult.stats.total}</div>
-                    <div><strong>Matched:</strong> {matchResult.stats.matched}</div>
-                    <div><strong>Skipped:</strong> {matchResult.stats.skipped}</div>
-                    <div><strong>Unmatched:</strong> {matchResult.stats.unmatched}</div>
-                  </div>
-                )}
                 
                 {matchResult.error && (
                   <p className="text-sm text-destructive">{matchResult.error}</p>
