@@ -506,26 +506,36 @@ serve(async (req) => {
       }, 200, req);
     }
 
-    console.log(`[${operationId}] Processing ${targetGroups.length} groups with concurrency control`);
+    console.log(`[${operationId}] Processing ${targetGroups.length} groups with pagination`);
 
-    // Limit concurrency to prevent CPU timeout
+    // Pagination to avoid worker limits
+    const totalGroups = targetGroups.length;
+    const p = Math.max(1, Number(page) || 1);
+    const size = Math.max(1, Math.min(50, Number(pageSize) || 25));
+    const sortedGroups = [...targetGroups].sort((a: any, b: any) => a.group_id - b.group_id);
+    const start = (p - 1) * size;
+    const end = Math.min(start + size, totalGroups);
+    const groupsToProcess = sortedGroups.slice(start, end);
+    const hasMore = end < totalGroups;
+    const nextPage = hasMore ? p + 1 : null;
+
     const envConcurrency = Number(Deno.env.get('TCGCSV_CONCURRENCY')) || 2;
     const requestedConcurrency = (typeof maxConcurrency === 'number' && isFinite(maxConcurrency)) ? maxConcurrency : undefined;
-    const concurrency = Math.max(1, Math.min(2, targetGroups.length, requestedConcurrency ?? envConcurrency));
-    
-    // If too many groups, suggest using selective sync instead
-    if (targetGroups.length > 50) {
+    const concurrency = Math.max(1, Math.min(2, groupsToProcess.length, requestedConcurrency ?? envConcurrency));
+
+    if (groupsToProcess.length === 0) {
       return json({
-        success: false,
+        success: true,
         categoryId,
         groupsProcessed: 0,
         groupIdsResolved: [],
-        summary: { fetched: 0, upserted: 0, skipped: 0 },
+        summary: { fetched: 0, upserted: 0, skipped: 0, rateRPS: 0, rateUPS: 0 },
         perGroup: [],
-        error: `Too many groups (${targetGroups.length}) for bulk sync. Use selective sync with specific group IDs instead.`,
-        operationId
-      }, 400, req);
+        pagination: { page: p, pageSize: size, nextPage, hasMore, totalGroups },
+        note: 'No groups to process on this page'
+      }, 200, req);
     }
+
     const controller = new ConcurrencyController(concurrency);
     
     const startTime = Date.now();
