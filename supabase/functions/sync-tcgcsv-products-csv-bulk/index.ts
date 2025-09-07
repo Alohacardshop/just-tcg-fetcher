@@ -544,7 +544,7 @@ serve(async (req) => {
 
     console.log(`[${operationId}] Bulk sync completed: ${totalFetched} fetched, ${totalUpserted} upserted in ${totalTime}ms (${rateRPS} RPS, ${rateUPS} UPS)`);
 
-    return json({
+    const responseBody = {
       success: true,
       categoryId,
       groupsProcessed: targetGroups.length,
@@ -559,7 +559,11 @@ serve(async (req) => {
       perGroup: perGroupResults.sort((a, b) => a.groupId - b.groupId),
       dryRun,
       operationId
-    }, 200, req);
+    };
+    
+    console.log(`[${operationId}] Returning response:`, JSON.stringify(responseBody, null, 2));
+
+    return json(responseBody, 200, req);
 
   } catch (error: any) {
     console.error(`[${operationId}] Bulk products sync error:`, error);
