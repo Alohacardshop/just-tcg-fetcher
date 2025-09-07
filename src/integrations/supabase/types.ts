@@ -47,6 +47,69 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_logs: {
+        Row: {
+          created_at: string
+          details: Json | null
+          id: string
+          message: string
+          operation_id: string
+          operation_type: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          id?: string
+          message: string
+          operation_id: string
+          operation_type: string
+          status: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          id?: string
+          message?: string
+          operation_id?: string
+          operation_type?: string
+          status?: string
+        }
+        Relationships: []
+      }
+      tcgcsv_categories: {
+        Row: {
+          category_group_id: number | null
+          created_at: string
+          display_name: string | null
+          id: string
+          modified_on: string | null
+          name: string
+          tcgcsv_category_id: number
+          updated_at: string
+        }
+        Insert: {
+          category_group_id?: number | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          modified_on?: string | null
+          name: string
+          tcgcsv_category_id: number
+          updated_at?: string
+        }
+        Update: {
+          category_group_id?: number | null
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          modified_on?: string | null
+          name?: string
+          tcgcsv_category_id?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
