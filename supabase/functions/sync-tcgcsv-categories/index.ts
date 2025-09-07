@@ -60,7 +60,7 @@ async function syncCategoriesToDatabase(categories: TcgCsvCategory[], operationI
           tcgcsv_category_id: cat.categoryId,
           name: cat.name,
           display_name: cat.displayName,
-          modified_on: cat.modifiedOn,
+          modified_on: cat.modifiedOn ? new Date(cat.modifiedOn).toISOString() : null,
           category_group_id: cat.categoryGroupId
         })),
         { 

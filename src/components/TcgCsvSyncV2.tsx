@@ -1,14 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Download, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { Download, CheckCircle, AlertCircle, Loader2, RefreshCcw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 
 export const TcgCsvSyncV2 = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [logs, setLogs] = useState<any[]>([]);
+
+  const loadLogs = async () => {
+    const { data, error } = await supabase
+      .from('sync_logs')
+      .select('*')
+      .eq('operation_type', 'tcgcsv_categories_sync')
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (!error) setLogs(data || []);
+  };
+
+  useEffect(() => {
+    loadLogs();
+  }, []);
 
   const syncCategories = async () => {
     setIsLoading(true);
@@ -25,15 +40,16 @@ export const TcgCsvSyncV2 = () => {
       });
       
       setLastSync(new Date().toLocaleString());
-    } catch (error) {
+    } catch (error: any) {
       console.error('Sync error:', error);
       toast({
         title: "Sync Failed",
-        description: error.message || "Failed to sync categories",
+        description: error?.message || "Failed to sync categories",
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
+      loadLogs();
     }
   };
 
@@ -74,6 +90,36 @@ export const TcgCsvSyncV2 = () => {
               Categories are used to map games between JustTCG and TCGCSV systems.
             </AlertDescription>
           </Alert>
+
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-medium">Latest Sync Logs</h3>
+              <Button variant="secondary" size="sm" onClick={loadLogs} className="flex items-center gap-2">
+                <RefreshCcw className="h-3 w-3" /> Refresh
+              </Button>
+            </div>
+            <div className="max-h-64 overflow-y-auto rounded-md border">
+              <ul className="divide-y">
+                {logs.map((log) => (
+                  <li key={log.id} className="p-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{log.status}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(log.created_at).toLocaleString()}</span>
+                    </div>
+                    <div className="text-muted-foreground">{log.message}</div>
+                    {log.details && (
+                      <pre className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground/80">
+                        {JSON.stringify(log.details, null, 2)}
+                      </pre>
+                    )}
+                  </li>
+                ))}
+                {logs.length === 0 && (
+                  <li className="p-3 text-sm text-muted-foreground">No logs yet.</li>
+                )}
+              </ul>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
