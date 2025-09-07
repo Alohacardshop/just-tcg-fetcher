@@ -9,20 +9,17 @@ import { formatRelativeTime, pluralize, truncateText } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 
 export const CategoriesCard = () => {
-  const { data, loading, invoke } = useEdgeFn('sync-tcgcsv-categories');
+  const { data, loading, invoke } = useEdgeFn('sync-tcgcsv-categories-csv');
   const [lastRun, setLastRun] = React.useState<any>(null);
 
   const handleSync = async () => {
     try {
       const result = await invoke({}, { suppressToast: true });
       
-      const arr = Array.isArray(result?.categories) ? result.categories : [];
-      const count = Number.isFinite(result?.categoriesCount) ? result.categoriesCount : arr.length;
+      const count = result?.summary?.upserted ?? 0;
 
       if (count === 0) {
-        let description = result?.note ? 
-          `No categories returned (parsed from results). ${result.note}` :
-          "No categories returned (parsed from results).";
+        let description = "No categories in CSV — try again after daily update (20:00 UTC)";
         
         if (result?.error) {
           description = `Error: ${result.error}`;
@@ -37,17 +34,17 @@ export const CategoriesCard = () => {
           variant: "destructive",
         });
       } else {
-        const skippedText = result?.skipped ? ` (${result.skipped} skipped)` : '';
+        const skippedText = result?.summary?.skipped ? ` (${result.summary.skipped} skipped)` : '';
         toast({ 
           title: "Categories synced successfully", 
-          description: `Categories synced: ${count}${skippedText}` 
+          description: `Synced ${count} categories (CSV)${skippedText}` 
         });
       }
 
       setLastRun({
         timestamp: new Date(),
         count,
-        skipped: result?.skipped || 0,
+        skipped: result?.summary?.skipped || 0,
         note: result?.note,
         error: result?.error
       });

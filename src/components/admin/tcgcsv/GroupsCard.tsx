@@ -23,7 +23,7 @@ export const GroupsCard = () => {
   const { groups, loading: groupsLoading, refetch: refetchGroups } = useGroups(
     selectedCategoryId ? Number(selectedCategoryId) : undefined
   );
-  const { data, loading: syncLoading, invoke } = useEdgeFn('sync-tcgcsv-groups');
+  const { data, loading: syncLoading, invoke } = useEdgeFn('sync-tcgcsv-groups-csv');
 
   // Filter groups based on search query
   const filteredGroups = useMemo(() => {
@@ -51,10 +51,7 @@ export const GroupsCard = () => {
         categoryId: Number(selectedCategoryId) 
       }, { suppressToast: true });
       
-      // Robust count calculation
-      const count = Number.isFinite(result?.groupsCount) ? 
-        result.groupsCount : 
-        (Array.isArray(result?.groups) ? result.groups.length : 0);
+      const count = result?.summary?.upserted ?? 0;
 
       if (!result?.success) {
         let description = `Error: ${result?.error || 'Unknown error'}`;
@@ -74,7 +71,7 @@ export const GroupsCard = () => {
       }
 
       if (count === 0) {
-        const description = result?.note || "No groups returned for this category.";
+        const description = "No groups in CSV — try again after daily update (20:00 UTC)";
         
         toast({
           title: "No groups found",
@@ -82,13 +79,11 @@ export const GroupsCard = () => {
           variant: "destructive",
         });
       } else {
-        const skippedText = result?.skipped ? ` (${result.skipped} skipped)` : '';
-        const urlText = result?.url ? ` from ${new URL(result.url).pathname}` : '';
-        const parseText = result?.parseSource ? ` via ${result.parseSource}` : '';
+        const skippedText = result?.summary?.skipped ? ` (${result.summary.skipped} skipped)` : '';
         
         toast({ 
           title: "Groups synced successfully", 
-          description: `Synced ${count} groups${skippedText}${urlText}${parseText}` 
+          description: `Synced ${count} groups for ${categories.find(c => c.tcgcsv_category_id === Number(selectedCategoryId))?.display_name} (CSV)${skippedText}` 
         });
         
         // Refresh the groups list

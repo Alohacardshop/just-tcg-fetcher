@@ -29,7 +29,7 @@ export const ProductsSelectiveCard = () => {
   const { groups, loading: groupsLoading } = useGroups(
     selectedCategoryId ? Number(selectedCategoryId) : undefined
   );
-  const { data: syncResult, loading: syncLoading, invoke } = useEdgeFn('sync-tcgcsv-products-selective');
+  const { data: syncResult, loading: syncLoading, invoke } = useEdgeFn('sync-tcgcsv-products-selective-csv');
 
   // Parse group name filters into chips
   const nameFilterChips = useMemo(() => {
@@ -109,7 +109,7 @@ export const ProductsSelectiveCard = () => {
         
         toast({ 
           title: isDryRun ? "Preview completed" : "Products synced successfully", 
-          description: `${formatNumber(totalUpserted)} products across ${groupsProcessed} sets${dryRunText}${emptyGroupsText}` 
+          description: `${formatNumber(totalUpserted)} products across ${groupsProcessed} sets (CSV)${dryRunText}${emptyGroupsText}` 
         });
       }
     } catch (error) {
