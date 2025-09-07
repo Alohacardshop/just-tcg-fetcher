@@ -12,6 +12,7 @@ import Index from "./pages/Index";
 import Auth from "./pages/Auth";
 import HarvestManager from "./pages/HarvestManager";
 import AutomationSettings from "./pages/AutomationSettings";
+import Matching from "./pages/Matching";
 import NotFound from "./pages/NotFound";
 
 const App = () => (
@@ -32,6 +33,7 @@ const App = () => (
               <Route path="/auth" element={<Auth />} />
               <Route path="/harvest" element={<HarvestManager />} />
               <Route path="/automation" element={<AutomationSettings />} />
+              <Route path="/matching" element={<Matching />} />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

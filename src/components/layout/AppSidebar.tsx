@@ -6,7 +6,8 @@ import {
   Database, 
   Settings, 
   BarChart3,
-  Sparkles
+  Sparkles,
+  Zap
 } from "lucide-react";
 import {
   Sidebar,
@@ -40,6 +41,12 @@ const menuItems = [
     url: "/automation",
     icon: Clock,
     description: "Automated sync settings"
+  },
+  {
+    title: "Matching",
+    url: "/matching",
+    icon: Zap,
+    description: "AI-powered card matching"
   },
 ];
 

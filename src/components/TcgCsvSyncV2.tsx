@@ -6,19 +6,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '@/integrations/supabase/client';
-import { useSyncLogs } from "@/hooks/useSyncStatus";
-import { Search, RefreshCw, Download, Zap, Activity, Clock, Route } from 'lucide-react';
+import { Search, RefreshCw, Download, Activity, Clock, ExternalLink } from 'lucide-react';
 import { TcgCsvGuidedPanel } from './TcgCsvGuidedPanel';
 import { SetMappingPanel } from './SetMappingPanel';
 import { GroupSelector } from './GroupSelector';
-
-interface Game {
-  id: string;
-  name: string;
-  jt_game_id: string;
-}
 
 interface Category {
   id: string;
@@ -43,315 +37,168 @@ interface FetchResult {
   error?: string;
 }
 
-interface MatchResult {
-  success: boolean;
-  operationId: string;
-  matches?: any[];
-  stats?: {
-    total: number;
-    matched: number;
-    skipped: number;
-    unmatched: number;
-  };
-  error?: string;
-}
-
 export const TcgCsvSyncV2 = () => {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  
-  // State management
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [selectedGame, setSelectedGame] = useState<string>('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [dryRun, setDryRun] = useState(true);
-  const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
-  const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
-  const [currentOperationId, setCurrentOperationId] = useState<string>('');
-  const [loadingGroupId, setLoadingGroupId] = useState<string>('');
-  const [lastMatchOperationId, setLastMatchOperationId] = useState<string | null>(null);
   const [selectedOperationId, setSelectedOperationId] = useState<string>('');
+  const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
+  
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
-  // Keep Guided Workflow in sync with Categories tab selection
-  useEffect(() => {
-    if (selectedCategories.length === 1) {
-      setSelectedCategoryId(selectedCategories[0]);
-    } else if (selectedCategories.length === 0) {
-      setSelectedCategoryId('');
-    }
-  }, [selectedCategories]);
-
-  // Get sync logs for current operation
-  const { data: syncLogs } = useSyncLogs(currentOperationId);
-
-  // Query for recent sync operations
+  // Get recent operations for monitoring
   const { data: recentOperations = [] } = useQuery({
-    queryKey: ['recent-sync-operations'],
+    queryKey: ['recent-operations'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('sync_logs')
-        .select('operation_id, operation_type, created_at')
-        .in('operation_type', ['tcgcsv-smart-match', 'tcgcsv-match'])
+        .select('*')
+        .eq('operation_type', 'tcgcsv-fetch-v2')
         .order('created_at', { ascending: false })
         .limit(10);
       
       if (error) throw error;
-      return data;
+      return data || [];
+    },
+    refetchInterval: 5000
+  });
+
+  // Get categories with counts
+  const { data: categories = [], isLoading: categoriesLoading, refetch: refetchCategories } = useQuery({
+    queryKey: ['tcgcsv-categories-with-counts'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tcgcsv_categories')
+        .select('*')
+        .order('name');
+
+      if (error) throw error;
+
+      const categoriesWithCounts = await Promise.all(
+        (data || []).map(async (category) => {
+          const [groupsResult, productsResult] = await Promise.all([
+            supabase
+              .from('tcgcsv_groups')
+              .select('group_id', { count: 'exact', head: true })
+              .eq('tcgcsv_category_id', category.category_id),
+            supabase
+              .from('tcgcsv_products')
+              .select('product_id', { count: 'exact', head: true })
+              .eq('category_id', category.category_id)
+          ]);
+
+          return {
+            ...category,
+            groupsCount: groupsResult.count || 0,
+            productsCount: productsResult.count || 0
+          };
+        })
+      );
+
+      return categoriesWithCounts;
     }
   });
 
-  // Query for match results when we have an operation ID
-  const { data: matchResults = [] } = useQuery({
-    queryKey: ['match-results', selectedOperationId],
+  // Get groups for selected category
+  const { data: groups = [] } = useQuery({
+    queryKey: ['tcgcsv-groups', selectedCategoryId],
     queryFn: async () => {
-      if (!selectedOperationId) return [];
-      
-      const { data, error } = await supabase
-        .from('card_product_links')
-        .select(`
-          *,
-          cards!inner(name, number, sets!inner(name))
-        `)
-        .order('match_confidence', { ascending: false })
-        .limit(50);
-      
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!selectedOperationId
-  });
-
-  // Fetch games
-  const { data: games, isLoading: gamesLoading } = useQuery({
-    queryKey: ['games'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('games')
-        .select('id, name, jt_game_id')
-        .order('name');
-      
-      if (error) throw error;
-      return data || [];
-    },
-  });
-
-  // Fetch categories with stats
-  const { data: categories, isLoading: categoriesLoading, refetch: refetchCategories } = useQuery({
-    queryKey: ['tcgcsv-categories-with-stats'],
-    queryFn: async () => {
-      const { data: categoriesData, error: categoriesError } = await supabase
-        .from('tcgcsv_categories')
-        .select('id, category_id, name, data')
-        .order('name');
-      
-      if (categoriesError) throw categoriesError;
-
-      // Compute counts per category using HEAD requests to avoid row limits
-      const categoryIds = categoriesData?.map(c => c.category_id) || [];
-
-      // Fetch counts in parallel per category
-      const groupCountsEntries = await Promise.all(
-        categoryIds.map(async (id) => {
-          const { count, error } = await supabase
-            .from('tcgcsv_groups')
-            .select('group_id', { count: 'exact', head: true })
-            .eq('tcgcsv_category_id', id);
-          if (error) {
-            console.error('Groups count error for category', id, error);
-            return [id, 0] as [string, number];
-          }
-          return [id, count || 0] as [string, number];
-        })
-      );
-
-      const productCountsEntries = await Promise.all(
-        categoryIds.map(async (id) => {
-          const { count, error } = await supabase
-            .from('tcgcsv_products')
-            .select('product_id', { count: 'exact', head: true })
-            .eq('category_id', id);
-          if (error) {
-            console.error('Products count error for category', id, error);
-            return [id, 0] as [string, number];
-          }
-          return [id, count || 0] as [string, number];
-        })
-      );
-
-      // Build counts dictionaries from entries
-      const groupCounts = Object.fromEntries(groupCountsEntries) as Record<string, number>;
-
-      const productCounts = Object.fromEntries(productCountsEntries) as Record<string, number>;
-      // Combine data with stats
-      return categoriesData?.map(category => ({
-        ...category,
-        groupsCount: groupCounts[category.category_id] || 0,
-        productsCount: productCounts[category.category_id] || 0
-      })) || [];
-    },
-  });
-
-  // Fetch groups for selected categories
-  const { data: groups, isLoading: groupsLoading } = useQuery({
-    queryKey: ['tcgcsv-groups', selectedCategories],
-    queryFn: async () => {
-      if (selectedCategories.length === 0) return [];
+      if (!selectedCategoryId) return [];
       
       const { data, error } = await supabase
         .from('tcgcsv_groups')
-        .select('group_id, name, tcgcsv_category_id, release_date')
-        .in('tcgcsv_category_id', selectedCategories)
+        .select('*')
+        .eq('tcgcsv_category_id', selectedCategoryId)
         .order('name');
       
       if (error) throw error;
       return data || [];
     },
-    enabled: selectedCategories.length > 0,
+    enabled: !!selectedCategoryId
   });
 
-  // TCGCSV Fetch Mutation
+  // Fetch mutation
   const fetchMutation = useMutation({
-    mutationFn: async ({ fetchType, categoryIds }: { fetchType: string; categoryIds?: string[] }) => {
-      if (fetchType === 'categories') {
-        const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
-          body: { fetchType: 'categories' }
-        });
-        if (error) throw error;
-        setCurrentOperationId(data.operationId);
-        return data;
-      }
-      
-      if (fetchType === 'selected' && categoryIds && categoryIds.length > 0) {
-        // Fetch groups and products for selected categories
-        const results = [];
-        for (const categoryId of categoryIds) {
-          // Fetch groups for this category
-          const { data: groupData, error: groupError } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
-            body: { fetchType: 'groups', categoryId }
-          });
-          if (groupError) throw groupError;
-          results.push(groupData);
-          
-          // Get groups to fetch products
-          const { data: groups } = await supabase
-            .from('tcgcsv_groups')
-            .select('group_id')
-            .eq('tcgcsv_category_id', categoryId);
-          
-          // Fetch products for each group
-          for (const group of groups || []) {
-            const { data: productData, error: productError } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
-              body: { fetchType: 'products', categoryId, groupId: group.group_id }
-            });
-            if (productError) throw productError;
-            results.push(productData);
-          }
+    mutationFn: async ({ type, categoryIds, categoryId, groupId }: { 
+      type: 'categories' | 'groups' | 'products';
+      categoryIds?: string[];
+      categoryId?: string;
+      groupId?: string;
+    }) => {
+      const operationId = `fetch-${Date.now()}`;
+      setFetchResult(null);
+
+      const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
+        body: { 
+          type,
+          categoryIds,
+          categoryId,
+          groupId,
+          operationId
         }
-        return { success: true, message: `Fetched data for ${categoryIds.length} categories`, operationId: `batch-${Date.now()}` };
-      }
-      
-      if (fetchType === 'all') {
-        const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
-          body: { fetchType: 'all' }
-        });
-        if (error) throw error;
-        return data;
-      }
-      
-      throw new Error('Invalid fetch type');
-    },
-    onSuccess: (data) => {
-      setFetchResult(data);
-      // Refetch all data to update stats
-      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['tcgcsv-groups'] });
-      toast({
-        title: "Fetch Successful",
-        description: data.message || 'Data fetched successfully',
       });
+
+      if (error) throw error;
+      return { data, operationId };
+    },
+    onSuccess: (result) => {
+      setFetchResult({
+        success: true,
+        operationId: result.operationId,
+        message: result.data.message
+      });
+      toast({
+        title: "Fetch Completed",
+        description: result.data.message,
+      });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-counts'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-operations'] });
     },
     onError: (error: any) => {
-      setFetchResult({ success: false, operationId: '', error: error.message });
+      setFetchResult({
+        success: false,
+        operationId: '',
+        error: error.message
+      });
       toast({
         title: "Fetch Failed",
-        description: error.message,
+        description: error.message || "An unexpected error occurred",
         variant: "destructive",
       });
-    },
+    }
   });
 
-  // Smart Match Mutation
-  const matchMutation = useMutation({
-    mutationFn: async ({ gameId, dryRun }: { gameId: string; dryRun: boolean }) => {
-      const { data, error } = await supabase.functions.invoke('tcgcsv-smart-match', {
-        body: { gameId, dryRun }
-      });
-      
-      if (error) throw error;
-      return data;
-    },
-    onSuccess: (data) => {
-      setMatchResult(data);
-      setLastMatchOperationId(data.operationId);
-      setSelectedOperationId(data.operationId);
-      toast({
-        title: "Matching Complete",
-        description: dryRun 
-          ? `Dry run: Found ${data.stats?.matched || 0} potential matches`
-          : `Matched ${data.stats?.matched || 0} cards successfully`,
-      });
-    },
-    onError: (error: any) => {
-      setMatchResult({ success: false, operationId: '', error: error.message });
-      toast({
-        title: "Matching Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  // Clear all TCGCSV data mutation
+  // Clear data mutation
   const clearDataMutation = useMutation({
     mutationFn: async () => {
-      // Clear tables in correct order (due to dependencies)
-      await supabase.from('card_product_links').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('tcgcsv_products').delete().neq('product_id', '');
-      await supabase.from('tcgcsv_groups').delete().neq('group_id', '');
-      await supabase.from('tcgcsv_categories').delete().neq('category_id', '');
+      const tables = ['tcgcsv_products', 'tcgcsv_groups', 'tcgcsv_categories'];
       
-      return { success: true, message: 'All TCGCSV data cleared successfully' };
+      // Clear data using RPC or individual table operations
+      const { error } = await supabase.rpc('clear_tcgcsv_data');
+      if (error) throw error;
     },
-    onSuccess: (data) => {
-      // Refresh all queries
-      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-list'] });
-      queryClient.invalidateQueries({ queryKey: ['tcgcsv-groups'] });
-      queryClient.invalidateQueries({ queryKey: ['tcgcsv-stats'] });
-      
-      // Reset local state
-      setSelectedCategories([]);
-      setSelectedCategoryId('');
-      
+    onSuccess: () => {
       toast({
         title: "Data Cleared",
-        description: data.message,
+        description: "All TCGCSV data has been removed from the database.",
       });
+      queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-counts'] });
+      setSelectedCategories([]);
+      setSelectedCategoryId('');
     },
     onError: (error: any) => {
       toast({
         title: "Clear Failed",
-        description: error.message,
+        description: error.message || "Failed to clear data",
         variant: "destructive",
       });
-    },
+    }
   });
 
-  // Filter categories based on search
-  const filteredCategories = categories?.filter(cat => 
-    cat.name.toLowerCase().includes(searchTerm.toLowerCase())
-  ) || [];
+  const filteredCategories = categories.filter(category =>
+    category.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   const handleCategoryToggle = (categoryId: string) => {
     setSelectedCategories(prev => 
@@ -369,6 +216,38 @@ export const TcgCsvSyncV2 = () => {
     setSelectedCategories([]);
   };
 
+  const handleFetchSelected = () => {
+    if (selectedCategories.length === 0) {
+      toast({
+        title: "No Categories Selected",
+        description: "Please select at least one category to fetch.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    fetchMutation.mutate({ 
+      type: 'categories', 
+      categoryIds: selectedCategories 
+    });
+  };
+
+  const handleFetchAll = () => {
+    const allCategoryIds = categories.map(cat => cat.category_id);
+    fetchMutation.mutate({ 
+      type: 'categories', 
+      categoryIds: allCategoryIds 
+    });
+  };
+
+  const handleGroupFetch = (categoryId: string, groupId: string) => {
+    fetchMutation.mutate({ 
+      type: 'products', 
+      categoryId,
+      groupId 
+    });
+  };
+
   return (
     <div className="space-y-6">
       <Card>
@@ -377,579 +256,224 @@ export const TcgCsvSyncV2 = () => {
             <Download className="h-5 w-5" />
             TCGCSV Data Fetcher
           </CardTitle>
-        <CardDescription>
-          Fetch and sync trading card data from TCGCSV: Categories → Groups (Sets) → Products (Cards)
-        </CardDescription>
+          <CardDescription>
+            Fetch trading card data from TCGCSV API for categories, groups, and products
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="flex gap-4 mb-6">
-            <Button 
-              onClick={() => {
-                refetchCategories();
-                fetchMutation.mutate({ fetchType: 'categories' });
-              }}
-              disabled={fetchMutation.isPending || categoriesLoading}
-              variant="outline"
-              className="flex items-center gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${(fetchMutation.isPending || categoriesLoading) ? 'animate-spin' : ''}`} />
-              Refresh Categories
-            </Button>
-            
-            <Button 
-              onClick={() => fetchMutation.mutate({ fetchType: 'all' })}
-              disabled={fetchMutation.isPending}
-              className="flex items-center gap-2"
-            >
-              <Download className="h-4 w-4" />
-              Fetch All Data
-            </Button>
+      </Card>
 
-            <Button 
-              onClick={() => clearDataMutation.mutate()}
-              disabled={clearDataMutation.isPending}
-              variant="destructive"
-              className="flex items-center gap-2"
-            >
-              <RefreshCw className={`h-4 w-4 ${clearDataMutation.isPending ? 'animate-spin' : ''}`} />
-              Clear All TCGCSV Data
-            </Button>
-          </div>
+      <Tabs defaultValue="categories" className="space-y-6">
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="categories">Categories</TabsTrigger>
+          <TabsTrigger value="guided">Guided</TabsTrigger>
+          <TabsTrigger value="set-mapping">Set Mapping</TabsTrigger>
+          <TabsTrigger value="monitor">Monitor</TabsTrigger>
+        </TabsList>
 
-          <Tabs defaultValue="workflow" className="w-full">
-            <TabsList className="grid w-full grid-cols-6">
-              <TabsTrigger value="workflow">Guided Workflow</TabsTrigger>
-              <TabsTrigger value="categories">Categories ({categories?.length || 0})</TabsTrigger>
-              <TabsTrigger value="mapping">JustTCG↔TCGCSV Mapping</TabsTrigger>
-              <TabsTrigger value="match">Smart Match</TabsTrigger>
-              <TabsTrigger value="matches">Matches</TabsTrigger>
-              <TabsTrigger value="monitor">Monitor</TabsTrigger>
-            </TabsList>
-            
-            <TabsContent value="workflow" className="space-y-4">
-              <TcgCsvGuidedPanel 
-                selectedCategoryId={selectedCategoryId}
-                onSelectCategory={setSelectedCategoryId}
-              />
-              <GroupSelector selectedCategoryId={selectedCategoryId} />
-            </TabsContent>
-
-            <TabsContent value="mapping" className="space-y-4">
-              <SetMappingPanel selectedGame={selectedGame} />
-            </TabsContent>
-            
-            <TabsContent value="categories" className="space-y-4">
-              {/* Search and Controls */}
-              <div className="flex gap-4 items-center">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search categories..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
-                  />
+        <TabsContent value="categories" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Categories</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => refetchCategories()}
+                    disabled={categoriesLoading}
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-2 ${categoriesLoading ? 'animate-spin' : ''}`} />
+                    Refresh Categories
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFetchAll}
+                    disabled={fetchMutation.isPending || categories.length === 0}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Fetch All Data
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => clearDataMutation.mutate()}
+                    disabled={clearDataMutation.isPending}
+                  >
+                    Clear All
+                  </Button>
                 </div>
-                <div className="flex gap-2">
+              </div>
+              <CardDescription>
+                Select categories to fetch their groups and products. {categories.length} categories available.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                    <Input
+                      placeholder="Search categories..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8 w-64"
+                    />
+                  </div>
+                  <Badge variant="secondary">
+                    {selectedCategories.length} selected
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={handleSelectAll}>
                     Select All ({filteredCategories.length})
                   </Button>
                   <Button variant="outline" size="sm" onClick={handleDeselectAll}>
-                    Clear ({selectedCategories.length})
+                    Deselect All
                   </Button>
-                </div>
-              </div>
-
-              {/* Data Overview */}
-              <div className="grid grid-cols-3 gap-4 mb-4">
-                <Card className="p-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-green-600">
-                      {categories?.filter(c => c.groupsCount > 0 && c.productsCount > 0).length || 0}
-                    </div>
-                    <div className="text-sm text-muted-foreground">Complete Categories</div>
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="text-center">
-                    <div className="text-2xl font-bold text-yellow-600">
-                      {categories?.filter(c => c.groupsCount > 0 || c.productsCount > 0).length || 0}
-                    </div>
-                    <div className="text-sm text-muted-foreground">With Some Data</div>
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="text-center">
-                     <div className="text-2xl font-bold">
-                       {categories?.reduce((sum, c) => sum + c.productsCount, 0) || 0}
-                     </div>
-                     <div className="text-sm text-muted-foreground">Total Products</div>
-                  </div>
-                </Card>
-              </div>
-
-              {/* Selected Categories Actions */}
-              {selectedCategories.length > 0 && (
-                <Card className="bg-primary/5 border-primary/20">
-                  <CardContent className="pt-4">
-                    <div className="flex items-center justify-between">
-                       <div>
-                         <p className="font-medium">{selectedCategories.length} categories selected</p>
-                         <p className="text-sm text-muted-foreground">
-                           This will fetch groups (sets) and products (cards) for the selected categories
-                         </p>
-                       </div>
-                      <Button
-                        onClick={() => fetchMutation.mutate({ 
-                          fetchType: 'selected', 
-                          categoryIds: selectedCategories 
-                        })}
-                        disabled={fetchMutation.isPending}
-                        className="flex items-center gap-2"
-                      >
-                        <Download className="h-4 w-4" />
-                        Fetch Selected Data
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Categories Grid */}
-              {categoriesLoading ? (
-                <div className="text-center py-8">Loading categories...</div>
-              ) : filteredCategories.length === 0 ? (
-                <Card>
-                  <CardContent className="pt-6 text-center">
-                    <p className="text-muted-foreground">
-                      {categories?.length === 0 ? 'No categories found. Click "Refresh Categories" to fetch data.' : 'No categories match your search.'}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredCategories.map((category) => {
-                    const hasData = category.groupsCount > 0 || category.productsCount > 0;
-                    const isComplete = category.groupsCount > 0 && category.productsCount > 0;
-                    
-                    return (
-                      <Card 
-                        key={category.id} 
-                        className={`cursor-pointer transition-all hover:shadow-md ${
-                          selectedCategories.includes(category.category_id) 
-                            ? 'bg-primary/10 border-primary shadow-md' 
-                            : 'hover:bg-muted/50'
-                        } ${isComplete ? 'border-green-200 bg-green-50/50' : hasData ? 'border-yellow-200 bg-yellow-50/50' : ''}`}
-                        onClick={() => handleCategoryToggle(category.category_id)}
-                      >
-                        <CardContent className="pt-4">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-1">
-                                <h3 className="font-medium text-sm leading-tight">{category.name}</h3>
-                                {isComplete && <Badge variant="default" className="text-xs bg-green-600">✓</Badge>}
-                                {hasData && !isComplete && <Badge variant="secondary" className="text-xs bg-yellow-600">Partial</Badge>}
-                                {!hasData && <Badge variant="outline" className="text-xs">No Data</Badge>}
-                              </div>
-                              <p className="text-xs text-muted-foreground">ID: {category.category_id}</p>
-                              
-                      {/* Stats */}
-                      <div className="flex gap-3 mt-2 text-xs">
-                         <div className={`flex items-center gap-1 ${category.groupsCount > 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
-                           <span className="w-2 h-2 rounded-full bg-current"></span>
-                           {category.groupsCount} groups
-                         </div>
-                         <div className={`flex items-center gap-1 ${category.productsCount > 0 ? 'text-blue-600' : 'text-muted-foreground'}`}>
-                           <span className="w-2 h-2 rounded-full bg-current"></span>
-                           {category.productsCount} products
-                         </div>
-                      </div>
-                      
-                      {/* Last updated info from sync logs */}
-                      {syncLogs && syncLogs.some(log => 
-                        log.details && 
-                        typeof log.details === 'object' && 
-                        'categoryId' in log.details && 
-                        log.details.categoryId === category.category_id
-                      ) && (
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          <Clock className="h-3 w-3 inline mr-1" />
-                          Recently synced
-                        </div>
-                      )}
-                              
-                              {category.data && typeof category.data === 'object' && 'popularity' in category.data && (
-                                <Badge variant="secondary" className="mt-2 text-xs">
-                                  Popularity: {(category.data as any).popularity}
-                                </Badge>
-                              )}
-                            </div>
-                            <Checkbox
-                              checked={selectedCategories.includes(category.category_id)}
-                              onChange={() => {}}
-                              className="ml-2"
-                            />
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Groups for Selected Categories */}
-              {selectedCategories.length > 0 && groups && groups.length > 0 && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Available Groups ({groups?.length || 0})</CardTitle>
-                    <CardDescription>
-                      TCGCSV Groups (Sets/Expansions) for selected categories
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-60 overflow-y-auto">
-                      {groups.map((group) => {
-                        const categoryId = selectedCategories[0]; // Since we know there's at least one
-                        return (
-                          <div 
-                            key={group.group_id} 
-                            className="p-3 border rounded-lg bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
-                            onClick={async () => {
-                              if (loadingGroupId) return; // Prevent multiple clicks
-                              
-                              setLoadingGroupId(group.group_id);
-                              try {
-                                const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
-                                  body: { 
-                                    fetchType: 'products', 
-                                    categoryId: categoryId, 
-                                    groupId: group.group_id 
-                                  }
-                                });
-                                if (error) throw error;
-                                toast({
-                                  title: "Products Fetched",
-                                  description: `Successfully fetched products for ${group.name}`,
-                                });
-                                // Refresh categories to update product counts
-                                queryClient.invalidateQueries({ queryKey: ['tcgcsv-categories-with-stats'] });
-                                queryClient.invalidateQueries({ queryKey: ['tcgcsv-groups-for-selector'] });
-                              } catch (error: any) {
-                                toast({
-                                  title: "Fetch Failed",
-                                  description: error.message,
-                                  variant: "destructive",
-                                });
-                              } finally {
-                                setLoadingGroupId('');
-                              }
-                            }}
-                          >
-                            <div className="font-medium text-sm">{group.name}</div>
-                            <div className="text-xs text-muted-foreground">
-                              ID: {group.group_id}
-                              {group.release_date && (
-                                <span className="block">Released: {group.release_date}</span>
-                              )}
-                            </div>
-                            <div className="mt-2">
-                              <Button 
-                                size="sm" 
-                                variant="outline" 
-                                className="w-full text-xs"
-                                disabled={loadingGroupId === group.group_id}
-                              >
-                                {loadingGroupId === group.group_id ? 'Fetching...' : 'Fetch Products'}
-                              </Button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </TabsContent>
-            
-            <TabsContent value="monitor" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Activity className="h-5 w-5" />
-                    Sync Monitoring
-                  </CardTitle>
-                  <CardDescription>
-                    Monitor data fetching progress and sync logs
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Select Operation to Monitor</label>
-                    <select 
-                      value={selectedOperationId} 
-                      onChange={(e) => setSelectedOperationId(e.target.value)}
-                      className="w-full p-2 border rounded-md"
-                    >
-                      <option value="">Select operation to view logs...</option>
-                      {recentOperations.map((op) => (
-                        <option key={op.operation_id} value={op.operation_id}>
-                          {op.operation_type} - {new Date(op.created_at).toLocaleDateString()} ({op.operation_id.slice(-8)})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => window.open('https://supabase.com/dashboard/project/ljywcyhnpzqgpowwrpre/functions/tcgcsv-smart-match/logs', '_blank')}
-                    >
-                      Smart Match Logs
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => window.open('https://supabase.com/dashboard/project/ljywcyhnpzqgpowwrpre/functions/tcgcsv-match/logs', '_blank')}
-                    >
-                      Legacy Match Logs
-                    </Button>
-                  </div>
-
-                  {/* Recent Sync Logs */}
-                  {currentOperationId && syncLogs && syncLogs.length > 0 ? (
-                    <Card>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Recent Sync Logs ({currentOperationId.slice(-8)})</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-1 max-h-60 overflow-y-auto">
-                        {syncLogs.slice(0, 20).map((log, idx) => (
-                          <div key={idx} className="text-xs p-2 bg-muted/50 rounded">
-                            <div className="flex justify-between items-start">
-                              <Badge variant={log.status === 'success' ? 'default' : log.status === 'warning' ? 'secondary' : 'destructive'} className="text-xs">
-                                {log.status}
-                              </Badge>
-                              <span className="text-muted-foreground">
-                                {new Date(log.created_at).toLocaleTimeString()}
-                              </span>
-                            </div>
-                            <p className="text-muted-foreground mt-1">{log.message}</p>
-                            {log.duration_ms && (
-                              <span className="text-xs text-muted-foreground">
-                                Duration: {log.duration_ms}ms
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  ) : (
-                    <div className="text-center text-muted-foreground py-8">
-                      No active sync operations. Start a fetch to see progress here.
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            <TabsContent value="match" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Zap className="h-5 w-5" />
-                    Smart Matching
-                  </CardTitle>
-                  <CardDescription>
-                    Match JustTCG cards with TCGCSV products using AI-powered algorithms
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Select Game</label>
-                    <select 
-                      value={selectedGame} 
-                      onChange={(e) => setSelectedGame(e.target.value)}
-                      className="w-full p-2 border rounded-md"
-                      disabled={gamesLoading}
-                    >
-                      <option value="">Select a game...</option>
-                      {games?.map((game) => (
-                        <option key={game.id} value={game.id}>
-                          {game.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="dryRun"
-                      checked={dryRun}
-                      onCheckedChange={(checked) => setDryRun(checked === true)}
-                    />
-                    <label htmlFor="dryRun" className="text-sm font-medium">
-                      Dry run (preview matches only, don't save)
-                    </label>
-                  </div>
-                  
                   <Button 
-                    onClick={() => matchMutation.mutate({ gameId: selectedGame, dryRun })}
-                    disabled={matchMutation.isPending || !selectedGame}
-                    className="w-full flex items-center gap-2"
+                    onClick={handleFetchSelected}
+                    disabled={selectedCategories.length === 0 || fetchMutation.isPending}
+                    size="sm"
                   >
-                    <Zap className="h-4 w-4" />
-                    {dryRun ? 'Preview Smart Matches' : 'Execute Smart Matching'}
+                    <Download className="h-4 w-4 mr-2" />
+                    Fetch Selected
                   </Button>
+                </div>
+              </div>
 
-                  {matchResult && (
-                    <div className="rounded-lg border p-4 space-y-2">
-                      <h4 className="font-medium">Match Results</h4>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>Total Cards: {matchResult.stats?.total || 0}</div>
-                        <div>Matched: {matchResult.stats?.matched || 0}</div>
-                        <div>Skipped: {matchResult.stats?.skipped || 0}</div>
-                        <div>Unmatched: {matchResult.stats?.unmatched || 0}</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto">
+                {filteredCategories.map((category) => (
+                  <Card 
+                    key={category.id} 
+                    className={`cursor-pointer transition-colors ${
+                      selectedCategories.includes(category.category_id)
+                        ? 'bg-primary/5 border-primary'
+                        : 'hover:bg-muted/50'
+                    }`}
+                    onClick={() => handleCategoryToggle(category.category_id)}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-start space-x-3">
+                        <Checkbox
+                          checked={selectedCategories.includes(category.category_id)}
+                          onChange={() => handleCategoryToggle(category.category_id)}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-medium text-sm">{category.name}</h4>
+                          <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                            <span>{category.groupsCount} groups</span>
+                            <span>{category.productsCount} products</span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex justify-between items-center">
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="guided" className="space-y-6">
+          <TcgCsvGuidedPanel 
+            selectedCategoryId={selectedCategoryId}
+            onSelectCategory={setSelectedCategoryId}
+          />
+          
+          {selectedCategoryId && (
+            <GroupSelector
+              selectedCategoryId={selectedCategoryId}
+            />
+          )}
+        </TabsContent>
+
+        <TabsContent value="set-mapping" className="space-y-6">
+          <SetMappingPanel selectedGame={null} />
+        </TabsContent>
+
+        <TabsContent value="monitor" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5" />
+                Fetch Operations Monitor
+              </CardTitle>
+              <CardDescription>
+                Monitor recent TCGCSV fetch operations and view their logs
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Select Operation to Monitor</label>
+                <Select value={selectedOperationId} onValueChange={setSelectedOperationId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose an operation..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {recentOperations.map((op) => (
+                      <SelectItem key={op.id} value={op.operation_id}>
+                        {op.operation_id} - {new Date(op.created_at).toLocaleDateString()} ({op.status})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {selectedOperationId && (
+                <div className="space-y-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(`https://supabase.com/dashboard/project/ljywcyhnpzqgpowwrpre/functions/tcgcsv-fetch-v2/logs`, '_blank')}
+                  >
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    View Edge Function Logs
+                  </Button>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <h4 className="font-medium">Recent Operations</h4>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {recentOperations.map((op) => (
+                    <div key={op.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                      <div>
+                        <div className="font-medium text-sm">{op.operation_id}</div>
                         <div className="text-xs text-muted-foreground">
-                          Operation ID: {matchResult.operationId}
-                        </div>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          onClick={() => {
-                            setSelectedOperationId(matchResult.operationId);
-                          }}
-                        >
-                          View Detailed Results
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="matches" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Route className="h-5 w-5" />
-                    Match Results Browser
-                  </CardTitle>
-                  <CardDescription>
-                    Browse and analyze card matching results from previous operations
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Select Operation</label>
-                      <select 
-                        value={selectedOperationId} 
-                        onChange={(e) => setSelectedOperationId(e.target.value)}
-                        className="w-full p-2 border rounded-md"
-                      >
-                        <option value="">Select a matching operation...</option>
-                        {lastMatchOperationId && (
-                          <option value={lastMatchOperationId}>
-                            Latest Match ({lastMatchOperationId.slice(-8)})
-                          </option>
-                        )}
-                        {recentOperations.map((op) => (
-                          <option key={op.operation_id} value={op.operation_id}>
-                            {op.operation_type} - {new Date(op.created_at).toLocaleDateString()} ({op.operation_id.slice(-8)})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {selectedOperationId && (
-                      <div className="rounded-lg border">
-                        <div className="p-4 border-b">
-                          <h4 className="font-medium">Top Matches (by confidence)</h4>
-                          <p className="text-sm text-muted-foreground">
-                            Showing top 50 matches for operation {selectedOperationId.slice(-8)}
-                          </p>
-                        </div>
-                        
-                        <div className="max-h-96 overflow-auto">
-                          {matchResults.length > 0 ? (
-                            <div className="divide-y">
-                              {matchResults.map((match: any) => (
-                                <div key={match.id} className="p-4 space-y-2">
-                                  <div className="flex justify-between items-start">
-                                    <div className="space-y-1">
-                                      <p className="font-medium">{match.cards.name}</p>
-                                      <p className="text-sm text-muted-foreground">
-                                        {match.cards.sets.name} • #{match.cards.number}
-                                      </p>
-                                    </div>
-                                    <div className="text-right">
-                                      <div className="text-sm font-medium">
-                                        {(match.match_confidence * 100).toFixed(1)}%
-                                      </div>
-                                      <div className="text-xs text-muted-foreground">
-                                        {match.match_method}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <p className="text-sm">→ TCGCSV: {match.tcgcsv_product_id}</p>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="p-8 text-center text-muted-foreground">
-                              No matches found for this operation
-                            </div>
-                          )}
+                          {new Date(op.created_at).toLocaleString()}
                         </div>
                       </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={op.status === 'completed' ? 'default' : op.status === 'failed' ? 'destructive' : 'secondary'}>
+                          {op.status}
+                        </Badge>
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
-      {/* Results */}
-      {(fetchResult || matchResult) && (
+      {fetchResult && (
         <Card>
           <CardHeader>
-            <CardTitle>Operation Results</CardTitle>
+            <CardTitle className={fetchResult.success ? "text-green-600" : "text-red-600"}>
+              {fetchResult.success ? "Fetch Successful" : "Fetch Failed"}
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {fetchResult && (
+          <CardContent>
+            {fetchResult.success ? (
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Badge variant={fetchResult.success ? "default" : "destructive"}>
-                    {fetchResult.success ? "✓ Success" : "✗ Failed"}
-                  </Badge>
-                  <span className="text-sm text-muted-foreground">
-                    {fetchResult.operationId}
-                  </span>
-                </div>
-                <p className="text-sm">
-                  {fetchResult.message || fetchResult.error}
-                </p>
+                <p className="text-sm">{fetchResult.message}</p>
+                <p className="text-xs text-muted-foreground">Operation ID: {fetchResult.operationId}</p>
               </div>
-            )}
-            
-            {matchResult && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Badge variant={matchResult.success ? "default" : "destructive"}>
-                    {matchResult.success ? "✓ Matching Complete" : "✗ Matching Failed"}
-                  </Badge>
-                </div>
-                
-                
-                {matchResult.error && (
-                  <p className="text-sm text-destructive">{matchResult.error}</p>
-                )}
-              </div>
+            ) : (
+              <p className="text-sm text-red-600">{fetchResult.error}</p>
             )}
           </CardContent>
         </Card>
