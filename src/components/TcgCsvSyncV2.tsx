@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,15 @@ export const TcgCsvSyncV2 = () => {
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [currentOperationId, setCurrentOperationId] = useState<string>('');
+
+  // Keep Guided Workflow in sync with Categories tab selection
+  useEffect(() => {
+    if (selectedCategories.length === 1) {
+      setSelectedCategoryId(selectedCategories[0]);
+    } else if (selectedCategories.length === 0) {
+      setSelectedCategoryId('');
+    }
+  }, [selectedCategories]);
 
   // Get sync logs for current operation
   const { data: syncLogs } = useSyncLogs(currentOperationId);
