@@ -121,6 +121,24 @@ async function fetchCategories(supabase: any, operationId: string): Promise<void
 
 async function fetchGroups(supabase: any, categoryId: string, operationId: string): Promise<void> {
   await logToSyncLogs(supabase, operationId, 'info', `Starting to fetch groups for category ${categoryId}`);
+
+  // Resolve game_id for this TCGCSV category
+  const { data: gameRow, error: gameErr } = await supabase
+    .from('games')
+    .select('id')
+    .eq('tcgcsv_category_id', categoryId)
+    .maybeSingle();
+
+  if (gameErr) {
+    await logToSyncLogs(supabase, operationId, 'error', `Failed to resolve game for category ${categoryId}`, { error: gameErr.message });
+    throw gameErr;
+  }
+
+  if (!gameRow?.id) {
+    await logToSyncLogs(supabase, operationId, 'warning', `No game mapped to TCGCSV category ${categoryId}. Skipping group upsert.`);
+    return;
+  }
+  const gameId = gameRow.id;
   
   const response = await fetchWithRetry(`https://tcgcsv.com/tcgplayer/${categoryId}/groups`, operationId, supabase);
   
@@ -138,28 +156,53 @@ async function fetchGroups(supabase: any, categoryId: string, operationId: strin
   
   await logToSyncLogs(supabase, operationId, 'info', `Fetched ${groups.length} groups for category ${categoryId}`);
   
-  // Upsert groups
+  // Upsert groups with required game_id
+  let successCount = 0;
   for (const group of groups) {
     const groupData = {
       group_id: group.groupId.toString(),
       category_id: categoryId,
       tcgcsv_category_id: categoryId,
+      game_id: gameId,
       name: group.name,
       slug: group.slug,
       release_date: group.publishedOn ? new Date(group.publishedOn).toISOString().split('T')[0] : null,
       data: group
     };
     
-    await supabase
+    const { error: upsertErr } = await supabase
       .from('tcgcsv_groups')
       .upsert(groupData, { onConflict: 'group_id' });
+
+    if (upsertErr) {
+      await logToSyncLogs(supabase, operationId, 'error', `Failed to upsert group ${group.groupId}`, { error: upsertErr.message });
+    } else {
+      successCount += 1;
+    }
   }
   
-  await logToSyncLogs(supabase, operationId, 'success', `Successfully upserted ${groups.length} groups for category ${categoryId}`);
+  await logToSyncLogs(supabase, operationId, 'success', `Successfully upserted ${successCount}/${groups.length} groups for category ${categoryId}`, { gameId });
 }
 
 async function fetchProducts(supabase: any, categoryId: string, groupId: string, operationId: string): Promise<void> {
   await logToSyncLogs(supabase, operationId, 'info', `Starting to fetch products for category ${categoryId}, group ${groupId}`);
+  
+  // Resolve game_id via category
+  const { data: gameRow, error: gameErr } = await supabase
+    .from('games')
+    .select('id')
+    .eq('tcgcsv_category_id', categoryId)
+    .maybeSingle();
+
+  if (gameErr) {
+    await logToSyncLogs(supabase, operationId, 'error', `Failed to resolve game for products in category ${categoryId}`, { error: gameErr.message });
+    throw gameErr;
+  }
+  if (!gameRow?.id) {
+    await logToSyncLogs(supabase, operationId, 'warning', `No game mapped to TCGCSV category ${categoryId}. Skipping product upsert.`);
+    return;
+  }
+  const gameId = gameRow.id;
   
   const response = await fetchWithRetry(`https://tcgcsv.com/tcgplayer/${categoryId}/${groupId}/products`, operationId, supabase);
   
@@ -179,13 +222,15 @@ async function fetchProducts(supabase: any, categoryId: string, groupId: string,
   
   // Process products in batches
   const batchSize = 100;
+  let successCount = 0;
   for (let i = 0; i < products.length; i += batchSize) {
     const batch = products.slice(i, i + batchSize);
-    const productData = batch.map(product => ({
+    const productData = batch.map((product: any) => ({
       product_id: product.productId.toString(),
       category_id: categoryId,
       group_id: groupId,
       tcgcsv_group_id: groupId,
+      game_id: gameId,
       name: product.name,
       number: product.number || null,
       image_url: product.imageUrl || null,
@@ -193,14 +238,20 @@ async function fetchProducts(supabase: any, categoryId: string, groupId: string,
       data: product
     }));
     
-    await supabase
+    const { error: upsertErr } = await supabase
       .from('tcgcsv_products')
       .upsert(productData, { onConflict: 'product_id' });
-      
+    
+    if (upsertErr) {
+      await logToSyncLogs(supabase, operationId, 'error', `Failed to upsert products batch for group ${groupId}`, { error: upsertErr.message });
+    } else {
+      successCount += productData.length;
+    }
+    
     await logToSyncLogs(supabase, operationId, 'info', `Processed batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(products.length/batchSize)} for group ${groupId}`);
   }
   
-  await logToSyncLogs(supabase, operationId, 'success', `Successfully upserted ${products.length} products for group ${groupId}`);
+  await logToSyncLogs(supabase, operationId, 'success', `Upserted ~${successCount}/${products.length} products for group ${groupId}`, { gameId });
 }
 
 Deno.serve(async (req) => {
