@@ -33,6 +33,28 @@ function normalizeCardName(name: string): string {
     .replace(/\s+\(.*?\)$/g, '') // Remove parenthetical info
 }
 
+function extractCardNumberFromName(name: string): string | null {
+  // Try to extract card numbers from various patterns in names
+  const patterns = [
+    /#(\d+)/,                    // #123
+    /\s(\d+)\/\d+/,             // 123/150
+    /\s#(\d+)\s/,               // # 123 
+    /\s(\d{1,3})\s*$/,          // ends with 1-3 digits
+    /-\s*(\d+)$/,               // ends with - 123
+    /\[(\d+)\]/,                // [123]
+    /\((\d+)\)/                 // (123)
+  ]
+  
+  for (const pattern of patterns) {
+    const match = name.match(pattern)
+    if (match) {
+      return match[1]
+    }
+  }
+  
+  return null
+}
+
 function normalizeCardNumber(number: string): string {
   if (!number) return ''
   
@@ -267,36 +289,64 @@ async function matchProductsToCards(supabase: any, gameId: string, operationId: 
         for (const product of productChunk) {
           let matchedCard = null
           let matchMethod = null
+          let confidence = 0
           
-          // Primary matching: by card number
+          // Extract potential card number from product name
+          const extractedNumber = extractCardNumberFromName(product.name)
+          const normalizedProductName = normalizeCardName(product.name)
+          
+          // Strategy 1: Try number field first (if available)
           if (product.number) {
             const normalizedProductNumber = normalizeCardNumber(product.number)
             
             for (const card of cards) {
               if (card.number && normalizeCardNumber(card.number) === normalizedProductNumber) {
                 matchedCard = card
-                matchMethod = 'number'
+                matchMethod = 'number_field'
+                confidence = 1.0
                 numberMatches++
                 break
               }
             }
           }
           
-          // Fallback matching: by name similarity (limited to avoid timeout)
-          if (!matchedCard && cards.length < 200) { // Only do name matching for smaller sets
-            const normalizedProductName = normalizeCardName(product.name)
-            let bestScore = 0
+          // Strategy 2: Try extracted number from name + name similarity
+          if (!matchedCard && extractedNumber) {
+            const normalizedExtractedNumber = normalizeCardNumber(extractedNumber)
             
             for (const card of cards) {
-              const score = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
-              if (score > bestScore && score >= 0.8) {
-                bestScore = score
-                matchedCard = card
-                matchMethod = 'name'
+              // Check if card number matches extracted number
+              if (card.number && normalizeCardNumber(card.number) === normalizedExtractedNumber) {
+                // Also check name similarity for additional confidence
+                const nameScore = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
+                if (nameScore >= 0.6) { // Lower threshold since we have number match
+                  matchedCard = card
+                  matchMethod = 'extracted_number_and_name'
+                  confidence = 0.9
+                  numberMatches++
+                  break
+                }
+              }
+            }
+          }
+          
+          // Strategy 3: Pure name matching (for sets with reasonable size)
+          if (!matchedCard && cards.length < 300) {
+            let bestScore = 0
+            let bestCard = null
+            
+            for (const card of cards) {
+              const nameScore = calculateSimilarity(normalizedProductName, normalizeCardName(card.name))
+              if (nameScore > bestScore && nameScore >= 0.85) { // Higher threshold for name-only
+                bestScore = nameScore
+                bestCard = card
               }
             }
             
-            if (matchedCard && matchMethod === 'name') {
+            if (bestCard) {
+              matchedCard = bestCard
+              matchMethod = 'name_only'
+              confidence = bestScore
               nameMatches++
             }
           }
@@ -334,6 +384,7 @@ async function matchProductsToCards(supabase: any, gameId: string, operationId: 
               product_id: product.product_id,
               name: product.name,
               number: product.number,
+              extracted_number: extractedNumber,
               set_name: set.name
             })
           }
