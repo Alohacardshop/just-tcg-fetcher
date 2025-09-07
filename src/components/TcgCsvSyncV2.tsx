@@ -106,13 +106,20 @@ export const TcgCsvSyncV2 = () => {
     queryFn: async () => {
       if (!selectedCategoryId) return [];
       
+      console.log('TcgCsvSyncV2 fetching groups for category:', selectedCategoryId);
+      
       const { data, error } = await supabase
         .from('tcgcsv_groups')
         .select('*')
         .eq('tcgcsv_category_id', selectedCategoryId)
         .order('name');
       
-      if (error) throw error;
+      if (error) {
+        console.error('TcgCsvSyncV2 groups fetch error:', error);
+        throw error;
+      }
+      
+      console.log(`TcgCsvSyncV2 found ${data?.length || 0} groups for category ${selectedCategoryId}:`, data?.slice(0, 3));
       return data || [];
     },
     enabled: !!selectedCategoryId
@@ -344,7 +351,12 @@ export const TcgCsvSyncV2 = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto">
-                {filteredCategories.map((category) => (
+                {filteredCategories.length === 0 ? (
+                  <div className="col-span-full text-center text-muted-foreground py-8">
+                    {searchTerm ? 'No categories match your search.' : 'No categories available. Try refreshing.'}
+                  </div>
+                ) : (
+                  filteredCategories.map((category) => (
                   <Card 
                     key={category.id} 
                     className={`cursor-pointer transition-colors ${
@@ -370,7 +382,7 @@ export const TcgCsvSyncV2 = () => {
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                )))}
               </div>
             </CardContent>
           </Card>
