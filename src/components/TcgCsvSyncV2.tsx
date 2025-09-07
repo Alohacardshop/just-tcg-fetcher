@@ -46,12 +46,18 @@ export const TcgCsvSyncV2 = () => {
       const count = Number.isFinite(data?.categoriesCount) ? data.categoriesCount : arr.length;
 
       if (count === 0) {
-        let description = "No categories returned (check endpoint or network).";
+        let description = data?.note ? 
+          `No categories returned (parsed from results). ${data.note}` :
+          "No categories returned (parsed from results).";
+        
         if (data?.error) {
-          description += ` Error: ${data.error}`;
-        }
-        if (data?.hint?.code) {
-          description += ` Issue: ${data.hint.code}`;
+          description = `Error: ${data.error}`;
+          if (data?.hint?.code) {
+            description += ` (${data.hint.code})`;
+          }
+          if (data?.hint?.sample) {
+            description += ` Sample: ${data.hint.sample.slice(0, 100)}...`;
+          }
         }
         
         toast({
