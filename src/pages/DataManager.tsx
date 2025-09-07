@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { TabsDataSources } from '@/components/admin/TabsDataSources';
+import { CsvDebugTester } from '@/components/CsvDebugTester';
 import { 
   Download, 
   Database, 
@@ -107,6 +108,7 @@ const DataManager = () => {
           </TabsContent>
 
           <TabsContent value="admin" className="space-y-6">
+            <CsvDebugTester />
             <div className="grid gap-6 md:grid-cols-2">
               <Card>
                 <CardHeader>
