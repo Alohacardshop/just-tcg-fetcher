@@ -138,7 +138,7 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
           Guided Sync (TCGCSV)
         </CardTitle>
         <CardDescription>
-          TCGCSV Structure: Category (Pokémon/Magic) → Groups (Base Set, Jungle) → Products (Pikachu #25)
+          TCGCSV: Category (Pokémon) → Groups (Base Set, Jungle) → Products (Pikachu #25)
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -185,7 +185,7 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
                         className="h-1"
                       />
                       <p className="text-xs text-muted-foreground mt-1">
-                        {productsProgress.done} of {productsProgress.total} sets completed
+                        {productsProgress.done} of {productsProgress.total} groups processed
                       </p>
                     </div>
                   )}
@@ -206,11 +206,11 @@ export const TcgCsvGuidedPanel = ({ selectedCategoryId, onSelectCategory }: TcgC
                   <div className="grid grid-cols-2 gap-4 text-center">
                     <div>
                       <div className="text-lg font-bold text-blue-600">{stats.groupsCount}</div>
-                      <div className="text-xs text-muted-foreground">Groups (Sets)</div>
+                      <div className="text-xs text-muted-foreground">Groups</div>
                     </div>
                     <div>
                       <div className="text-lg font-bold">{stats.productsCount}</div>
-                      <div className="text-xs text-muted-foreground">Products (Cards)</div>
+                      <div className="text-xs text-muted-foreground">Products</div>
                     </div>
                   </div>
                 </CardContent>

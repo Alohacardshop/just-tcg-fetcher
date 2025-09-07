@@ -114,10 +114,10 @@ export const SetMappingPanel = ({ selectedGame }: SetMappingPanelProps) => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Link className="h-5 w-5" />
-          Set Mapping Overview
+          JustTCG Sets ↔ TCGCSV Groups Mapping
         </CardTitle>
         <CardDescription>
-          View and manage connections between JustTCG sets and TCGCSV groups
+          View and manage connections between JustTCG sets and TCGCSV groups (which represent sets/expansions)
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

@@ -314,9 +314,9 @@ export const TcgCsvSyncV2 = () => {
             <Download className="h-5 w-5" />
             TCGCSV Data Fetcher
           </CardTitle>
-          <CardDescription>
-            Fetch and sync trading card data from TCGCSV with intelligent matching
-          </CardDescription>
+        <CardDescription>
+          Fetch and sync trading card data from TCGCSV: Categories → Groups (Sets) → Products (Cards)
+        </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex gap-4 mb-6">
@@ -357,7 +357,7 @@ export const TcgCsvSyncV2 = () => {
             <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="workflow">Guided Workflow</TabsTrigger>
               <TabsTrigger value="categories">Categories ({categories?.length || 0})</TabsTrigger>
-              <TabsTrigger value="mapping">Set Mapping</TabsTrigger>
+              <TabsTrigger value="mapping">JustTCG↔TCGCSV Mapping</TabsTrigger>
               <TabsTrigger value="match">Smart Match</TabsTrigger>
               <TabsTrigger value="monitor">Monitor</TabsTrigger>
             </TabsList>
@@ -415,10 +415,10 @@ export const TcgCsvSyncV2 = () => {
                 </Card>
                 <Card className="p-4">
                   <div className="text-center">
-                    <div className="text-2xl font-bold">
-                      {categories?.reduce((sum, c) => sum + c.productsCount, 0) || 0}
-                    </div>
-                    <div className="text-sm text-muted-foreground">Total Products</div>
+                     <div className="text-2xl font-bold">
+                       {categories?.reduce((sum, c) => sum + c.productsCount, 0) || 0}
+                     </div>
+                     <div className="text-sm text-muted-foreground">Total Products</div>
                   </div>
                 </Card>
               </div>
@@ -428,12 +428,12 @@ export const TcgCsvSyncV2 = () => {
                 <Card className="bg-primary/5 border-primary/20">
                   <CardContent className="pt-4">
                     <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">{selectedCategories.length} categories selected</p>
-                        <p className="text-sm text-muted-foreground">
-                          This will fetch groups and products for the selected categories
-                        </p>
-                      </div>
+                       <div>
+                         <p className="font-medium">{selectedCategories.length} categories selected</p>
+                         <p className="text-sm text-muted-foreground">
+                           This will fetch groups (sets) and products (cards) for the selected categories
+                         </p>
+                       </div>
                       <Button
                         onClick={() => fetchMutation.mutate({ 
                           fetchType: 'selected', 
@@ -490,14 +490,14 @@ export const TcgCsvSyncV2 = () => {
                               
                       {/* Stats */}
                       <div className="flex gap-3 mt-2 text-xs">
-                        <div className={`flex items-center gap-1 ${category.groupsCount > 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
-                          <span className="w-2 h-2 rounded-full bg-current"></span>
-                          {category.groupsCount} sets
-                        </div>
-                        <div className={`flex items-center gap-1 ${category.productsCount > 0 ? 'text-blue-600' : 'text-muted-foreground'}`}>
-                          <span className="w-2 h-2 rounded-full bg-current"></span>
-                          {category.productsCount} cards
-                        </div>
+                         <div className={`flex items-center gap-1 ${category.groupsCount > 0 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                           <span className="w-2 h-2 rounded-full bg-current"></span>
+                           {category.groupsCount} groups
+                         </div>
+                         <div className={`flex items-center gap-1 ${category.productsCount > 0 ? 'text-blue-600' : 'text-muted-foreground'}`}>
+                           <span className="w-2 h-2 rounded-full bg-current"></span>
+                           {category.productsCount} products
+                         </div>
                       </div>
                       
                       {/* Last updated info from sync logs */}
@@ -536,9 +536,9 @@ export const TcgCsvSyncV2 = () => {
               {selectedCategories.length > 0 && groups && groups.length > 0 && (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Available Groups ({groups.length})</CardTitle>
+                    <CardTitle>Available Groups ({groups?.length || 0})</CardTitle>
                     <CardDescription>
-                      Sets/Groups available for selected categories
+                      TCGCSV Groups (Sets/Expansions) for selected categories
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
