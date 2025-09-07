@@ -6,13 +6,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '@/integrations/supabase/client';
 import { useSyncLogs } from "@/hooks/useSyncStatus";
-import { ThrottleStatsPanel } from "@/components/ThrottleStatsPanel";
-import { Search, RefreshCw, Download, Zap, Settings, Activity, Clock } from 'lucide-react';
+import { Search, RefreshCw, Download, Zap, Activity, Clock } from 'lucide-react';
 
 interface Game {
   id: string;
@@ -66,9 +63,6 @@ export const TcgCsvSyncV2 = () => {
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [currentOperationId, setCurrentOperationId] = useState<string>('');
-  const [concurrency, setConcurrency] = useState([3]);
-  const [requestsPerSecond, setRequestsPerSecond] = useState([2]);
-  const [showThrottleStats, setShowThrottleStats] = useState(false);
 
   // Get sync logs for current operation
   const { data: syncLogs } = useSyncLogs(currentOperationId);
@@ -155,13 +149,7 @@ export const TcgCsvSyncV2 = () => {
     mutationFn: async ({ fetchType, categoryIds }: { fetchType: string; categoryIds?: string[] }) => {
       if (fetchType === 'categories') {
         const { data, error } = await supabase.functions.invoke('tcgcsv-fetch-v2', {
-          body: { 
-            fetchType: 'categories',
-            throttleConfig: {
-              maxConcurrency: concurrency[0],
-              requestsPerSecond: requestsPerSecond[0]
-            }
-          }
+          body: { fetchType: 'categories' }
         });
         if (error) throw error;
         setCurrentOperationId(data.operationId);
@@ -322,55 +310,6 @@ export const TcgCsvSyncV2 = () => {
             </TabsList>
             
             <TabsContent value="categories" className="space-y-4">
-              {/* Throttle Controls */}
-              <Card className="bg-muted/20">
-                <CardContent className="pt-4">
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">Max Concurrency: {concurrency[0]}</Label>
-                      <Slider
-                        value={concurrency}
-                        onValueChange={setConcurrency}
-                        max={10}
-                        min={1}
-                        step={1}
-                        className="w-full"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium">Requests/Second: {requestsPerSecond[0]}</Label>
-                      <Slider
-                        value={requestsPerSecond}
-                        onValueChange={setRequestsPerSecond}
-                        max={10}
-                        min={0.5}
-                        step={0.5}
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-between items-center mt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Tune these settings to avoid rate limits and optimize performance
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowThrottleStats(!showThrottleStats)}
-                      className="flex items-center gap-2"
-                    >
-                      <Activity className="h-4 w-4" />
-                      {showThrottleStats ? 'Hide' : 'Show'} Stats
-                    </Button>
-                  </div>
-                  {showThrottleStats && (
-                    <div className="mt-4 pt-4 border-t">
-                      <ThrottleStatsPanel />
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
               {/* Search and Controls */}
               <div className="flex gap-4 items-center">
                 <div className="relative flex-1">
@@ -565,26 +504,26 @@ export const TcgCsvSyncV2 = () => {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Activity className="h-5 w-5" />
-                    Real-time Monitoring
+                    Sync Monitoring
                   </CardTitle>
                   <CardDescription>
-                    Monitor API throttling, task progress, and sync logs in real-time
+                    Monitor data fetching progress and sync logs
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ThrottleStatsPanel />
-                  
                   {/* Recent Sync Logs */}
-                  {currentOperationId && syncLogs && syncLogs.length > 0 && (
-                    <Card className="mt-4">
+                  {currentOperationId && syncLogs && syncLogs.length > 0 ? (
+                    <Card>
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Recent Sync Logs</CardTitle>
+                        <CardTitle className="text-sm">Recent Sync Logs ({currentOperationId.slice(-8)})</CardTitle>
                       </CardHeader>
-                      <CardContent className="space-y-1 max-h-40 overflow-y-auto">
-                        {syncLogs.slice(0, 10).map((log, idx) => (
+                      <CardContent className="space-y-1 max-h-60 overflow-y-auto">
+                        {syncLogs.slice(0, 20).map((log, idx) => (
                           <div key={idx} className="text-xs p-2 bg-muted/50 rounded">
                             <div className="flex justify-between items-start">
-                              <span className="font-medium">{log.status}</span>
+                              <Badge variant={log.status === 'success' ? 'default' : log.status === 'warning' ? 'secondary' : 'destructive'} className="text-xs">
+                                {log.status}
+                              </Badge>
                               <span className="text-muted-foreground">
                                 {new Date(log.created_at).toLocaleTimeString()}
                               </span>
@@ -599,6 +538,10 @@ export const TcgCsvSyncV2 = () => {
                         ))}
                       </CardContent>
                     </Card>
+                  ) : (
+                    <div className="text-center text-muted-foreground py-8">
+                      No active sync operations. Start a fetch to see progress here.
+                    </div>
                   )}
                 </CardContent>
               </Card>

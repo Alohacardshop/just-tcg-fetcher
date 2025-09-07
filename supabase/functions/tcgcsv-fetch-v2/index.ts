@@ -5,96 +5,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Throttling configuration
-interface ThrottleConfig {
-  maxConcurrency: number;
-  requestsPerSecond: number;
-  retryDelayMs: number;
-  maxRetries: number;
-}
-
-class APIThrottler {
-  private config: ThrottleConfig;
-  private queue: (() => Promise<any>)[] = [];
-  private running = 0;
-  private lastRequestTime = 0;
-  
-  constructor(config: ThrottleConfig) {
-    this.config = config;
-  }
-  
-  async enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const wrappedFn = async () => {
-        try {
-          const result = await this.executeWithRetry(fn);
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      };
-      
-      this.queue.push(wrappedFn);
-      this.processQueue();
-    });
-  }
-  
-  private async executeWithRetry<T>(fn: () => Promise<T>): Promise<T> {
-    for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-      try {
-        await this.waitForRateLimit();
-        return await fn();
-      } catch (error) {
-        if (attempt === this.config.maxRetries) {
-          throw error;
-        }
-        const delay = this.config.retryDelayMs * Math.pow(2, attempt);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-    throw new Error('Max retries exceeded');
-  }
-  
-  private async waitForRateLimit(): Promise<void> {
-    const now = Date.now();
-    const minInterval = 1000 / this.config.requestsPerSecond;
-    const timeSinceLastRequest = now - this.lastRequestTime;
-    
-    if (timeSinceLastRequest < minInterval) {
-      const waitTime = minInterval - timeSinceLastRequest;
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-    
-    this.lastRequestTime = Date.now();
-  }
-  
-  private async processQueue(): Promise<void> {
-    if (this.running >= this.config.maxConcurrency || this.queue.length === 0) {
-      return;
-    }
-    
-    const task = this.queue.shift();
-    if (!task) return;
-    
-    this.running++;
-    
-    try {
-      await task();
-    } finally {
-      this.running--;
-      this.processQueue();
-    }
-  }
-}
-
-// Global throttler
-const throttler = new APIThrottler({
-  maxConcurrency: 3,
-  requestsPerSecond: 2,
-  retryDelayMs: 1000,
-  maxRetries: 3
-});
-
 interface TcgCsvCategory {
   categoryId: number;
   name: string;
@@ -121,31 +31,38 @@ interface TcgCsvProduct {
   number?: string;
 }
 
-async function fetchWithRetry(url: string, operationId: string, supabase: any): Promise<any> {
-  return throttler.enqueue(async () => {
-    console.log(`🌐 Fetching: ${url}`);
-    await logToSyncLogs(supabase, operationId, 'info', `Fetching: ${url}`);
-    
-    const response = await fetch(url);
-    
-    if (response.status === 429) {
-      await logToSyncLogs(supabase, operationId, 'warning', 'Rate limited, will retry', { url, status: 429 });
-      throw new Error('Rate limited');
+async function fetchWithRetry(url: string, operationId: string, supabase: any, retries = 3): Promise<any> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      console.log(`🌐 Fetching: ${url} (attempt ${attempt + 1})`);
+      await logToSyncLogs(supabase, operationId, 'info', `Fetching: ${url} (attempt ${attempt + 1})`);
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      await logToSyncLogs(supabase, operationId, 'success', `Successfully fetched: ${url}`, { 
+        url, 
+        status: response.status,
+        dataLength: Array.isArray(data) ? data.length : Object.keys(data).length 
+      });
+      
+      return data;
+    } catch (error) {
+      console.error(`Fetch attempt ${attempt + 1} failed:`, error);
+      await logToSyncLogs(supabase, operationId, 'warning', `Fetch attempt ${attempt + 1} failed: ${error.message}`, { url, attempt: attempt + 1 });
+      
+      if (attempt === retries - 1) {
+        throw error;
+      }
+      
+      // Simple delay between retries
+      await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
     }
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    
-    const data = await response.json();
-    await logToSyncLogs(supabase, operationId, 'success', `Successfully fetched: ${url}`, { 
-      url, 
-      status: response.status,
-      dataLength: Array.isArray(data) ? data.length : Object.keys(data).length 
-    });
-    
-    return data;
-  });
+  }
 }
 
 async function logToSyncLogs(supabase: any, operationId: string, status: string, message: string, details?: any): Promise<void> {
@@ -322,27 +239,34 @@ Deno.serve(async (req) => {
         break;
         
       case 'all':
-        // Fetch everything: categories -> groups -> products
+        // For large operations, run in background to avoid timeouts
         const backgroundTask = async () => {
-          await fetchCategories(supabase, operationId);
-          
-          // Get all categories
-          const { data: categories } = await supabase
-            .from('tcgcsv_categories')
-            .select('category_id');
+          try {
+            // Fetch everything: categories -> groups -> products
+            await fetchCategories(supabase, operationId);
             
-          for (const cat of categories || []) {
-            await fetchGroups(supabase, cat.category_id, operationId);
-            
-            // Get groups for this category
-            const { data: groups } = await supabase
-              .from('tcgcsv_groups')
-              .select('group_id')
-              .eq('tcgcsv_category_id', cat.category_id);
+            // Get all categories
+            const { data: categories } = await supabase
+              .from('tcgcsv_categories')
+              .select('category_id');
               
-            for (const group of groups || []) {
-              await fetchProducts(supabase, cat.category_id, group.group_id, operationId);
+            for (const cat of categories || []) {
+              await fetchGroups(supabase, cat.category_id, operationId);
+              
+              // Get groups for this category
+              const { data: groups } = await supabase
+                .from('tcgcsv_groups')
+                .select('group_id')
+                .eq('tcgcsv_category_id', cat.category_id);
+                
+              for (const group of groups || []) {
+                await fetchProducts(supabase, cat.category_id, group.group_id, operationId);
+              }
             }
+            
+            await logToSyncLogs(supabase, operationId, 'completed', `TCGCSV fetch completed: ${fetchType}`);
+          } catch (error) {
+            await logToSyncLogs(supabase, operationId, 'failed', `TCGCSV fetch failed: ${error.message}`, { error: error.message });
           }
         };
         
@@ -354,13 +278,16 @@ Deno.serve(async (req) => {
         throw new Error(`Unknown fetchType: ${fetchType}`);
     }
 
-    await logToSyncLogs(supabase, operationId, 'completed', `TCGCSV fetch completed: ${fetchType}`);
+    // For non-background operations, log completion
+    if (fetchType !== 'all') {
+      await logToSyncLogs(supabase, operationId, 'completed', `TCGCSV fetch completed: ${fetchType}`);
+    }
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         operationId,
-        message: `Successfully fetched ${fetchType}`
+        message: `Successfully ${fetchType === 'all' ? 'started' : 'completed'} ${fetchType} fetch`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
