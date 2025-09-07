@@ -80,6 +80,12 @@ export const GroupsCard = () => {
         timestamp: new Date().toISOString() 
       });
 
+      // First test the URL directly to confirm it works
+      console.log('Testing direct access to: https://tcgcsv.com/tcgplayer/3/Groups.csv');
+      
+      const { data: testResult } = await invokeFn('test-tcgcsv-url', {});
+      console.log('Direct URL test result:', testResult);
+      
       // Use existing sync-tcgcsv-groups-csv-fast function, fall back to sync-tcgcsv-groups-csv if not available
       let functionName = 'sync-tcgcsv-groups-csv-fast';
       const { data: result, error: invokeFnError, status } = await invokeFn<GroupsCsvResp>(
